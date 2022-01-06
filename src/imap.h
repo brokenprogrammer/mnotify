@@ -23,6 +23,13 @@ typedef enum
 
 typedef struct
 {
+    char *Subject;
+    char *From;
+    char *Date;
+} imap_email_message;
+
+typedef struct
+{
     tls_socket Socket;
 
     imap_state State;

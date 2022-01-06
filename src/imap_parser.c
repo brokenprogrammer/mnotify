@@ -188,6 +188,23 @@ imap_parse_header_fields(imap *Imap, tokenizer *Tokenizer)
             printf("Subject: %s\n", Imap->Subject);
             printf("From: %s\n", Imap->From);
             printf("Date: %s\n", Imap->Date);
+
+
+            // TODO(Oskar): Decode data.
+            imap_email_message *Message = (imap_email_message *)malloc(sizeof(imap_email_message));
+            char *Subject = (char *)malloc(sizeof(char) * strlen(Imap->Subject) + 1); 
+            char *From = (char *)malloc(sizeof(char) * strlen(Imap->From) + 1);
+            char *Date =(char *)malloc(sizeof(char) * strlen(Imap->Date) + 1);
+
+            strcpy(Subject, Imap->Subject);
+            strcpy(From, Imap->From);
+            strcpy(Date, Imap->Date);
+
+            Message->Subject = Subject;
+            Message->From = From;
+            Message->Date = Date;
+
+            PostMessageW(GlobalWindow, WM_MNOTIFY_EMAIL_MESSAGE, 0, (LPARAM)Message);
         }
         Token = GetToken(Tokenizer);
     }
@@ -285,6 +302,7 @@ imap_parse(imap *Imap)
 
             case IMAP_STATE_IDLE:
             {
+                PostMessageW(GlobalWindow, WM_MNOTIFY_EMAIL_CLEAR, 0, 0);
                 imap_done(Imap);
                 return 0;
             } break;
@@ -331,6 +349,7 @@ imap_parse(imap *Imap)
 
             case IMAP_STATE_FETCHING:
             {
+                // NOTE(Oskar): Telling main thread to clear messages
                 tokenizer Temp = Tokenizer;
                 imap_parse_header_fields(Imap, &Temp);
 

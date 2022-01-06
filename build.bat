@@ -6,6 +6,6 @@ set link_flags= -opt:ref -incremental:no /Debug:fastlink
 if not exist build mkdir build
 pushd build
 
-start /b /wait "" "cl.exe" %compile_flags% ../src/main.c /link %link_flags% /out:mnotify.exe
+start /b /wait "" "cl.exe" %compile_flags% ../src/main.c /link %link_flags% /SUBSYSTEM:WINDOWS /out:mnotify.exe
 
 popd
