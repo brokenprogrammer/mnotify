@@ -123,19 +123,19 @@ Fill(tokenizer *Tokenizer)
 }
 
 static char *
-MoveBuffer(char *Buffer, unsigned int *BufferLength, unsigned int Length)
+MoveBuffer(char **Buffer, unsigned int *BufferLength, unsigned int Length)
 {
     char *Result = 0;
     
     if(*BufferLength >= Length)
     {
-        Result = Buffer;
-        Buffer += Length;
+        Result = *Buffer;
+        *Buffer += Length;
         *BufferLength -= Length;
     }
     else
     {
-        Buffer += *BufferLength;
+        *Buffer += *BufferLength;
         *BufferLength = 0;
     }
 
@@ -146,7 +146,7 @@ static void
 MoveForward(tokenizer *Tokenizer, unsigned int Length)
 {
     Tokenizer->ColumnNumber += Length;
-    Tokenizer->Input = MoveBuffer(Tokenizer->Input, &Tokenizer->InputLength, Length);    
+    MoveBuffer(&Tokenizer->Input, &Tokenizer->InputLength, Length);    
     Fill(Tokenizer);
 }
 
@@ -323,6 +323,28 @@ GetToken(tokenizer *Tokenizer)
 
     return Token;
 }
+
+static token
+PeekToken(tokenizer *Tokenizer)
+{
+    tokenizer T = *Tokenizer;
+    token Result = GetToken(&T);
+    return Result;
+}
+
+static int
+ExpectTokenType(tokenizer *Tokenizer, token_type Type)
+{
+    token Token = PeekToken(Tokenizer);
+    if (Token.Type == Type)
+    {
+        GetToken(Tokenizer);
+        return 0;
+    }
+
+    return -1;
+}
+
 
 static tokenizer
 Tokenize(char *Input, unsigned int InputLength)
