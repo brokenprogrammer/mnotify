@@ -464,68 +464,6 @@ imap_parse(imap *Imap, imap_response_type ExpectedResponseType, int CommandNumbe
 
                 return Response;
             } break;
-            
-            // case IMAP_RESPONSE_TYPE_SEARCH:
-            // {
-            //     token Token = PeekToken(&Tokenizer);
-            //     while (Token.Type == Token_Space)
-            //     {
-            //         Token = GetToken(&Tokenizer);
-            //     }
-
-            //     if (Token.Type == Token_Identifier)
-            //     {
-            //         char Tag[10];
-            //         sprintf(Tag, "A%03d", CommandNumber);
-            //         if(imap_parse_tagged_ok(&Tokenizer, Tag))
-            //         {
-            //             Response.Success = 1;
-            //         }
-            //         else
-            //         {
-            //             Response.Success = 0;
-            //         }
-
-            //         return Response;
-            //     }
-                
-            //     if (!parse_search_result(&Tokenizer, &Response))
-            //     {
-            //         Response.Success = 0;
-            //         return Response;
-            //     }
-            // } break;
-            
-            // case IMAP_RESPONSE_TYPE_FETCH:
-            // {
-            //     token Token = PeekToken(&Tokenizer);
-            //     while (Token.Type == Token_Space)
-            //     {
-            //         Token = GetToken(&Tokenizer);
-            //     }
-
-            //     if (Token.Type == Token_Identifier)
-            //     {
-            //         char Tag[10];
-            //         sprintf(Tag, "A%03d", CommandNumber);
-            //         if(imap_parse_tagged_ok(&Tokenizer, Tag))
-            //         {
-            //             Response.Success = 1;
-            //         }
-            //         else
-            //         {
-            //             Response.Success = 0;
-            //         }
-
-            //         return Response;
-            //     }
-
-            //     if (!parse_search_result(&Tokenizer, &Response))
-            //     {
-            //         Response.Success = 0;
-            //         return Response;
-            //     }
-            // } break;
         }
     }
     while ((Line = strtok_s(NULL, "\r\n", &Temp)) != NULL);
