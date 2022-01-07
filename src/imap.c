@@ -163,19 +163,11 @@ imap_idle(imap *Imap)
     return 0;
 }
 
-static int
+static imap_response
 imap_idle_listen(imap *Imap)
 {
-    // TODO(Oskar): In the future lets return the data regarding that type of 
-    // message we got.
     imap_response Response = imap_parse(Imap, IMAP_RESPONSE_TYPE_IDLE_LISTEN, -1);
-    if (!Response.Success)
-    {
-        printf("Failed parsing idle listen message\n");
-        return 0;
-    }
-
-    return 1;
+    return Response;
 }
 
 static int

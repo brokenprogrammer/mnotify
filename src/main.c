@@ -281,9 +281,16 @@ ThreadProc(LPVOID lpParameter)
             break;
         }
 
-        if (!imap_idle_listen(&Imap))
+        imap_idle_message IdleMessage = IMAP_IDLE_MESSAGE_UNKNOWN;
+        while (IdleMessage != IMAP_IDLE_MESSAGE_EXISTS)
         {
-            break;
+            imap_response IdleResponse = imap_idle_listen(&Imap);
+            if (!IdleResponse.Success)
+            {
+                return 0;
+            }
+
+            IdleMessage = IdleResponse.IdleMessageType;
         }
 
         if (!imap_done(&Imap))

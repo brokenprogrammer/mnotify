@@ -26,6 +26,13 @@ typedef enum
     IMAP_RESPONSE_TYPE_FETCH,
 } imap_response_type;
 
+typedef enum
+{
+    IMAP_IDLE_MESSAGE_UNKNOWN,
+    IMAP_IDLE_MESSAGE_EXISTS,
+    IMAP_IDLE_MESSAGE_EXPUNGE,
+} imap_idle_message;
+
 typedef struct
 {
     imap_response_type Type;
@@ -43,6 +50,11 @@ typedef struct
             int ParsedCapabilities;
             int HasIdle;
         }; // Login capability response
+
+        struct
+        {
+            imap_idle_message IdleMessageType;
+        }; // Idle message
 
         struct
         {

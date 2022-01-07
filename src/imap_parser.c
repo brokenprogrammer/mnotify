@@ -107,6 +107,57 @@ imap_parse_idle(tokenizer *Tokenizer)
     return 0;
 }
 
+static imap_idle_message
+imap_parse_idle_message(tokenizer *Tokenizer)
+{
+    if (ExpectTokenType(Tokenizer, Token_Asterisk))
+    {
+        printf("Unexpected token, Expected '*'!\n");
+        return IMAP_IDLE_MESSAGE_UNKNOWN;
+    }
+
+    if (ExpectTokenType(Tokenizer, Token_Space))
+    {
+        printf("Unexpected token, Expected Space!\n");
+        return IMAP_IDLE_MESSAGE_UNKNOWN;
+    }
+
+    // TODO(Oskar): Double check that there is always a number here.
+    if (ExpectTokenType(Tokenizer, Token_Number))
+    {
+        printf("Unexpected token, Expected Space!\n");
+        return IMAP_IDLE_MESSAGE_UNKNOWN;
+    }
+
+    if (ExpectTokenType(Tokenizer, Token_Space))
+    {
+        printf("Unexpected token, Expected Space!\n");
+        return IMAP_IDLE_MESSAGE_UNKNOWN;
+    }
+
+    token Token = GetToken(Tokenizer);
+    if (Token.Type != Token_Identifier)
+    {
+        printf("Unexpected token, Expected Space!\n");
+        return IMAP_IDLE_MESSAGE_UNKNOWN;
+    }
+    else
+    {
+        if (strstr(Token.Text, "EXISTS"))
+        {
+            return IMAP_IDLE_MESSAGE_EXISTS;
+        }
+        else if(strstr(Token.Text, "EXPUNGE"))
+        {
+            return IMAP_IDLE_MESSAGE_EXPUNGE;
+        }
+        else
+        {
+            return IMAP_IDLE_MESSAGE_UNKNOWN;
+        }
+    }
+}
+
 // TODO(Oskar): This is broken if there are too many unseen emails cause 
 // two rows has to be parsed then.
 static int
@@ -443,10 +494,10 @@ imap_parse(imap *Imap, imap_response_type ExpectedResponseType, int CommandNumbe
 
             case IMAP_RESPONSE_TYPE_IDLE_LISTEN:
             {
-                // NOTE(Oskar): For now we always update when something happens
-                // on server.
+                Response.IdleMessageType = imap_parse_idle_message(&Tokenizer);
                 Response.Success = 1;
                 return Response;
+
             } break;
             
             case IMAP_RESPONSE_TYPE_DONE:
