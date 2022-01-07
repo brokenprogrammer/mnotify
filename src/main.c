@@ -147,7 +147,7 @@ WindowProc(HWND Window, UINT Message, WPARAM WParam, LPARAM LParam)
         {
             UpdateTrayIcon(gIcon2);
             wchar_t Data[512];
-            swprintf(Data, 512, L"You have %d unread emails.", EmailCount);
+            swprintf(Data, 512, L"You have %d unread mail.", EmailCount);
             ShowNotification(Data, L"You've got new mails!", NIIF_INFO);
         }
 

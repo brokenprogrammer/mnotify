@@ -64,10 +64,6 @@ imap_init(imap *Imap, char *HostName, int Port)
     Imap->HasRecent = 0;
     Imap->CommandNumber = 1;
 
-    memset(Imap->Subject, 0, 1024);
-    memset(Imap->From, 0, 1024);
-    memset(Imap->Date, 0, 1024);
-
     imap_response Response = imap_parse(Imap, IMAP_RESPONSE_TYPE_PREAUTH, -1);
     if (!Response.Success)
     {
