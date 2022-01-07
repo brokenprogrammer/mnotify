@@ -25,40 +25,11 @@ imap_parse_tagged_ok(tokenizer *Tokenizer, char *Tag)
     return 1;
 }
 
-static imap_identified_provider
-imap_parse_greeting(tokenizer *Tokenizer, imap_response *Response)
-{
-    Response->Provider = IMAP_IDENTIFIED_PROVIDER_UNKNOWN;
-
-    // NOTE(Oskar): Expect untagged response in format:
-    // * Ok .. Gimap
-    if (ExpectTokenType(Tokenizer, Token_Asterisk) != 0)
-    {
-        printf("Failed to parse untagged greeting message!\n");
-        return 0;
-    }
-    GetToken(Tokenizer);
-
-    if (strstr(Tokenizer->Input, "Gimap"))
-    {
-        Response->Provider = IMAP_IDENTIFIED_PROVIDER_GMAIL;
-    }
-
-    return 1;
-}
-
 static int
 imap_parse_capabilities(tokenizer *Tokenizer, imap_response *Response)
 {
     Response->ParsedCapabilities = 1;
     Response->HasIdle = 0;
-
-    if (ExpectTokenType(Tokenizer, Token_Asterisk) != 0)
-    {
-        printf("Expected message to be untagged!\n");
-        return 0;
-    }
-    GetToken(Tokenizer);
 
     token Token = GetToken(Tokenizer);
     if (!strstr(Token.Text, "CAPABILITY"))
@@ -82,6 +53,48 @@ imap_parse_capabilities(tokenizer *Tokenizer, imap_response *Response)
             }
         }
         Token = GetToken(Tokenizer);
+    }
+
+    return 1;
+}
+
+static imap_identified_provider
+imap_parse_greeting(tokenizer *Tokenizer, imap_response *Response)
+{
+    Response->Provider = IMAP_IDENTIFIED_PROVIDER_UNKNOWN;
+
+    // NOTE(Oskar): Expect untagged response in format:
+    // * Ok .. Gimap
+    if (ExpectTokenType(Tokenizer, Token_Asterisk) != 0)
+    {
+        printf("Failed to parse untagged greeting message!\n");
+        return 0;
+    }
+    GetToken(Tokenizer);
+
+    if (strstr(Tokenizer->Input, "Gimap"))
+    {
+        Response->Provider = IMAP_IDENTIFIED_PROVIDER_GMAIL;
+    }
+    else
+    {
+        token Token = GetToken(Tokenizer);
+
+        if (Token.Type == Token_Identifier &&
+            strstr(Token.Text, "OK"))
+        {
+            Token = GetToken(Tokenizer); // Space
+            Token = GetToken(Tokenizer);
+            if (Token.Type == Token_OpenBrace)
+            {
+                if (strstr(Token.Text, "CAPABILITY"))
+                {
+                    // NOTE(Oskar): Not 100% sure this is always guaranteed to be yahoo but for now sure.
+                    Response->Provider = IMAP_IDENTIFIED_PROVIDER_YAHOO;
+                    return imap_parse_capabilities(Tokenizer, Response);
+                }
+            }
+        }
     }
 
     return 1;
@@ -436,6 +449,12 @@ imap_parse(imap *Imap, imap_response_type ExpectedResponseType, int CommandNumbe
                 // NOTE(Oskar): Check for optional CAPABILITY response
                 if (strstr(Tokenizer.Input, "CAPABILITY"))
                 {
+                    if (ExpectTokenType(&Tokenizer, Token_Asterisk) != 0)
+                    {
+                        Response.Success = 0;
+                    }
+                    GetToken(&Tokenizer);
+
                     if(imap_parse_capabilities(&Tokenizer, &Response))
                     {
                         continue;

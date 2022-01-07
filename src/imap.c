@@ -84,6 +84,15 @@ imap_init(imap *Imap, char *HostName, int Port)
         } break;
     }
 
+    if (Response.ParsedCapabilities)
+    {
+        Imap->ParsedCapabilities = 1;
+        if (Response.HasIdle)
+        {
+            Response.HasIdle = 0;
+        }
+    }
+
     return 0;
 }
 

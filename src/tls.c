@@ -71,6 +71,8 @@ static int tls_connect(tls_socket* s, const char* hostname, unsigned short port)
     // 5) when it returns SEC_E_INCOMPLETE_MESSAGE - need to read more data from server
     // 6) otherwise read data from server and go to step 1
 
+    int wants_client_cert = 0;
+
     CtxtHandle* context = NULL;
     int result = 0;
     for (;;)
@@ -123,6 +125,13 @@ static int tls_connect(tls_socket* s, const char* hostname, unsigned short port)
         else if (sec == SEC_I_INCOMPLETE_CREDENTIALS)
         {
             // server asked for client certificate, not supported here
+            if (wants_client_cert == 0)
+            {
+                // we retry handshake, it will reply with 0 client certificates
+                wants_client_cert = 1;
+                continue;
+            }
+            // otherwise server really wants to have have client certificates, cannot continue
             result = -1;
             break;
         }

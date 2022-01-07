@@ -1,6 +1,7 @@
 typedef enum
 {
     IMAP_IDENTIFIED_PROVIDER_GMAIL,
+    IMAP_IDENTIFIED_PROVIDER_YAHOO,
     IMAP_IDENTIFIED_PROVIDER_UNKNOWN,
 } imap_identified_provider;
 
@@ -38,6 +39,9 @@ typedef struct
     imap_response_type Type;
     int Success;
     
+    int ParsedCapabilities;
+    int HasIdle;
+    
     union
     {
         struct
@@ -45,11 +49,9 @@ typedef struct
             imap_identified_provider Provider;
         }; // Preauth response
 
-        struct
-        {
-            int ParsedCapabilities;
-            int HasIdle;
-        }; // Login capability response
+        // struct
+        // {
+        // }; // Login capability response
 
         struct
         {

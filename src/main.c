@@ -12,6 +12,8 @@
 #include <shellapi.h>
 #include <windowsx.h>
 #include <strsafe.h>
+#include <stdint.h>
+#include <timeapi.h>
 
 #pragma comment (lib, "kernel32.lib")
 #pragma comment (lib, "user32.lib")
@@ -21,6 +23,7 @@
 #pragma comment (lib, "secur32.lib")
 #pragma comment (lib, "shlwapi.lib")
 #pragma comment (lib, "uxtheme.lib")
+#pragma comment (lib, "winmm.lib")
 
 #include "tls.c"
 
@@ -214,9 +217,88 @@ WindowProc(HWND Window, UINT Message, WPARAM WParam, LPARAM LParam)
     return DefWindowProcW(Window, Message, WParam, LParam);
 }
 
+static void
+ThreadImapPolling(char *Host, int Port, char *Account, char *Password,
+     LARGE_INTEGER TickFrequency, int SleepIsGranular)
+{
+    int PollingTime = GetPrivateProfileInt (
+        "Account",
+        "pollingtimer",
+        -1,
+        MNOTIFY_CONFIG_FILE
+    );
+
+    for (;;)
+    {
+        imap Imap;
+        if (imap_init(&Imap, Host, Port) != 0)
+        {
+            printf("Imap connection failed.\n");
+            return;
+        }
+        
+        if(imap_login(&Imap, Account, Password) != 0)
+        {
+            printf("Imap Login failed.\n");
+            return;
+        }
+
+        if(imap_examine(&Imap, MailFolder) != 0)
+        {
+            return;
+        }
+
+        // NOTE(Oskar): We resort to polling
+        imap_response SearchResult = imap_search(&Imap);
+        if (!SearchResult.Success)
+        {
+            return;
+        }
+
+        // NOTE(Oskar): Find out which emails we want to get
+        if (SearchResult.NumberOfNumbers != EmailCount)
+        {
+            PostMessageW(GlobalWindow, WM_MNOTIFY_EMAIL_CLEAR, 0, 0);
+            PostMessageW(GlobalWindow, WM_MNOTIFY_EMAIL_MESSAGE, 0, (LPARAM)SearchResult.NumberOfNumbers);
+        }
+
+        // NOTE(Oskar): Waiting mechanic
+        {
+            double DesiredSecondsPerPoll = PollingTime;
+            int64_t DesiredCounts = (int64_t)(DesiredSecondsPerPoll * TickFrequency.QuadPart);
+            int64_t CountsToWait = DesiredCounts;
+
+            LARGE_INTEGER StartWait;
+            LARGE_INTEGER EndWait;   
+
+            QueryPerformanceCounter(&StartWait);
+            while (CountsToWait > 0)
+            {
+                if (SleepIsGranular)
+                {
+                    DWORD TimeToSleep = (DWORD)(1000.0f * ((double)(CountsToWait) / TickFrequency.QuadPart));
+                    if (TimeToSleep > 1)
+                    {
+                        Sleep(TimeToSleep);
+                    }
+                }
+
+                QueryPerformanceCounter(&EndWait);
+                CountsToWait -= EndWait.QuadPart - StartWait.QuadPart;
+                StartWait = EndWait;
+            }
+        }
+    }
+} 
+
 DWORD WINAPI
 ThreadProc(LPVOID lpParameter)
 {
+    static LARGE_INTEGER TickFrequency;
+    QueryPerformanceFrequency(&TickFrequency);
+    int SleepIsGranular = (timeBeginPeriod(1) == TIMERR_NOERROR);
+
+
     // NOTE(Oskar): Readon configuartion. Later some of this should be passed in
     // lpParameter.
     char Host[256];
@@ -268,58 +350,67 @@ ThreadProc(LPVOID lpParameter)
         return -1;
     }
 
-    // NOTE(Oskar): MailFolder is read in the main thread.
-    if(imap_examine(&Imap, MailFolder) != 0)
+    if (Imap.HasIdle)
     {
-        return -1;
-    }
-
-    for (;;)
-    {
-        if(imap_idle(&Imap) != 0)
+        // NOTE(Oskar): MailFolder is read in the main thread.
+        if(imap_examine(&Imap, MailFolder) != 0)
         {
-            break;
+            return -1;
         }
 
-        imap_idle_message IdleMessage = IMAP_IDLE_MESSAGE_UNKNOWN;
-        while (IdleMessage != IMAP_IDLE_MESSAGE_EXISTS)
+        for (;;)
         {
-            imap_response IdleResponse = imap_idle_listen(&Imap);
-            if (!IdleResponse.Success)
+            if(imap_idle(&Imap) != 0)
             {
-                return 0;
+                break;
             }
 
-            IdleMessage = IdleResponse.IdleMessageType;
+            imap_idle_message IdleMessage = IMAP_IDLE_MESSAGE_UNKNOWN;
+            while (IdleMessage != IMAP_IDLE_MESSAGE_EXISTS)
+            {
+                imap_response IdleResponse = imap_idle_listen(&Imap);
+                if (!IdleResponse.Success)
+                {
+                    return 0;
+                }
+
+                IdleMessage = IdleResponse.IdleMessageType;
+            }
+
+            if (!imap_done(&Imap))
+            {
+                break;
+            }
+
+            imap_response SearchResult = imap_search(&Imap);
+            if (!SearchResult.Success)
+            {
+                break;
+            }
+
+            // NOTE(Oskar): Find out which emails we want to get
+            if (SearchResult.NumberOfNumbers != EmailCount)
+            {
+                PostMessageW(GlobalWindow, WM_MNOTIFY_EMAIL_CLEAR, 0, 0);
+
+                // TODO(Oskar): For later if we want to display the data somehow within the application.
+                // The parsing is broken through so need to fix that first. It dies on longer requests as we don't
+                // get the full imap message in one go from gmail and idk how to fix it.
+                // imap_response FetchResponse = imap_fetch(&Imap, SearchResult.SequenceNumbers, SearchResult.NumberOfNumbers);
+                // if (!FetchResponse.Success)
+                // {
+                //     break;
+                // }
+
+                PostMessageW(GlobalWindow, WM_MNOTIFY_EMAIL_MESSAGE, 0, (LPARAM)SearchResult.NumberOfNumbers);
+            }
         }
+    }
+    else
+    {
+        imap_destroy(&Imap);
 
-        if (!imap_done(&Imap))
-        {
-            break;
-        }
-
-        imap_response SearchResult = imap_search(&Imap);
-        if (!SearchResult.Success)
-        {
-            break;
-        }
-
-        // NOTE(Oskar): Find out which emails we want to get
-        if (SearchResult.NumberOfNumbers != EmailCount)
-        {
-            PostMessageW(GlobalWindow, WM_MNOTIFY_EMAIL_CLEAR, 0, 0);
-
-            // TODO(Oskar): For later if we want to display the data somehow within the application.
-            // The parsing is broken through so need to fix that first. It dies on longer requests as we don't
-            // get the full imap message in one go from gmail and idk how to fix it.
-            // imap_response FetchResponse = imap_fetch(&Imap, SearchResult.SequenceNumbers, SearchResult.NumberOfNumbers);
-            // if (!FetchResponse.Success)
-            // {
-            //     break;
-            // }
-
-            PostMessageW(GlobalWindow, WM_MNOTIFY_EMAIL_MESSAGE, 0, (LPARAM)SearchResult.NumberOfNumbers);
-        }
+        ThreadImapPolling(Host, Port, Account, Password, TickFrequency, SleepIsGranular);        
     }
     
     imap_destroy(&Imap);

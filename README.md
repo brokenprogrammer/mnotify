@@ -21,6 +21,7 @@ The ini file contains the following fields:
 * password: Your password.
 * opensite: The link you want to open in your browser when clicking on MNotify in the system tray.
 * folder: The folder you want to listen for incoming emails in.
+* pollingtimer: If the IMAP service doesn't support IDLE we need to perform polling. This is to specify how often to poll in seconds.
 
 When `mnotify.ini` contains your desired options then you can simply run `mnotify.exe` located in the build directory.
 
@@ -29,6 +30,17 @@ When `mnotify.ini` contains your desired options then you can simply run `mnotif
 The application has been tested against the following providers:
 
 * Google GMail
+* Yahoo
+
+Note that for most providers they require you to generate an "App Password".
+See the following:
+
+* Google:[https://support.google.com/accounts/answer/185833?hl=en](https://support.google.com/accounts/answer/185833?hl=en)
+* Yahoo: [https://help.yahoo.com/kb/SLN15241.html](https://help.yahoo.com/kb/SLN15241.html)
+
+## Thanks to
+
+[Mārtiņš Možeiko (mmozeiko)](https://github.com/mmozeiko) for the tls code which is available [here](https://gist.github.com/mmozeiko/c0dfcc8fec527a90a02145d2cc0bfb6d).
 
 ## License
 
