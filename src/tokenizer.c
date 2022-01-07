@@ -66,6 +66,7 @@ typedef enum
     Token_Percent,
     Token_Dollar,
     Token_Quote,
+    Token_Plus,
 
     Token_String,
     Token_Identifier,
@@ -183,6 +184,7 @@ GetToken(tokenizer *Tokenizer)
         case '@':  {Token.Type = Token_At;} break;
         case '%':  {Token.Type = Token_Percent; } break;
         case '$':  {Token.Type = Token_Dollar; } break;
+        case '+':  {Token.Type = Token_Plus; } break;
 
         case '"':
         {
