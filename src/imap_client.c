@@ -35,10 +35,16 @@ imap_command(imap *Imap, BOOL IncrementCommandNumber, char *Format, ...)
 }
 
 static int
-imap_read_line(imap *Imap, char *Buffer, int BufferSize)
+imap_read_line(imap *Imap, char *Buffer, int BufferSize, BOOL ClearBuffer)
 {
     static char LocalBuffer[65536];
     static int LocalBufferSize = 0;
+
+    if (ClearBuffer)
+    {
+        LocalBufferSize = 0;
+        memset(LocalBuffer, 0, 65536);
+    }
 
     char *FoundLine = NULL;
     int Received = 0;
@@ -123,7 +129,7 @@ imap_read_greeting_response(imap *Imap)
     Response.Type = IMAP_RESPONSE_TYPE_GREETING;
 
     char Line[65536] = {0};
-    imap_read_line(Imap, Line, 65536);
+    imap_read_line(Imap, Line, 65536, TRUE);
     
     tokenizer Tokenizer = Tokenize(Line, strlen(Line));
     if (imap_parse_greeting(&Tokenizer, &Response))
@@ -145,7 +151,7 @@ imap_read_login_response(imap *Imap, char *Tag)
     Response.Type = IMAP_RESPONSE_TYPE_LOGIN;
 
     char Line[65536] = {0};
-    imap_read_line(Imap, Line, 65536);
+    imap_read_line(Imap, Line, 65536, TRUE);
     
     for (;;)
     {
@@ -161,7 +167,7 @@ imap_read_login_response(imap *Imap, char *Tag)
 
             if(imap_parse_capabilities(&Tokenizer, &Response))
             {
-                imap_read_line(Imap, Line, 65536);
+                imap_read_line(Imap, Line, 65536, FALSE);
                 continue;
             }
             else
@@ -178,7 +184,7 @@ imap_read_login_response(imap *Imap, char *Tag)
             break;
         }
 
-        imap_read_line(Imap, Line, 65536);
+        imap_read_line(Imap, Line, 65536, FALSE);
     }
 
     return Response;
@@ -191,7 +197,7 @@ imap_read_examine_response(imap *Imap, char *Tag)
     Response.Type = IMAP_RESPONSE_TYPE_EXAMINE;
 
     char Line[65536] = {0};
-    imap_read_line(Imap, Line, 65536);
+    imap_read_line(Imap, Line, 65536, TRUE);
 
     for (;;)
     {
@@ -200,7 +206,7 @@ imap_read_examine_response(imap *Imap, char *Tag)
         if (Token.Type == Token_Asterisk)
         {
             // NOTE(Oskar): For now we don't care about theese flags.
-            imap_read_line(Imap, Line, 65536);
+            imap_read_line(Imap, Line, 65536, FALSE);
             continue;
         }
         else
@@ -228,7 +234,7 @@ imap_read_idle_response(imap *Imap)
     Response.Type = IMAP_RESPONSE_TYPE_IDLE;
 
     char Line[65536] = {0};
-    imap_read_line(Imap, Line, 65536);
+    imap_read_line(Imap, Line, 65536, TRUE);
 
     tokenizer Tokenizer = Tokenize(Line, strlen(Line));
     if (imap_parse_idle(&Tokenizer))
@@ -250,11 +256,18 @@ imap_read_idle_listen_response(imap *Imap)
     Response.Type = IMAP_RESPONSE_TYPE_IDLE_LISTEN;
 
     char Line[65536] = {0};
-    imap_read_line(Imap, Line, 65536);
+    int LineLength = imap_read_line(Imap, Line, 65536, TRUE);
 
-    tokenizer Tokenizer = Tokenize(Line, strlen(Line));
-    Response.IdleMessageType = imap_parse_idle_message(&Tokenizer);
-    Response.Success = 1;
+    if (LineLength > 0)
+    {
+        tokenizer Tokenizer = Tokenize(Line, strlen(Line));
+        Response.IdleMessageType = imap_parse_idle_message(&Tokenizer);
+        Response.Success = 1;
+    }
+    else
+    {
+        Response.Success = 0;
+    }
 
     return Response;
 }
@@ -266,7 +279,7 @@ imap_read_done_response(imap *Imap, char *Tag)
     Response.Type = IMAP_RESPONSE_TYPE_IDLE_LISTEN;
 
     char Line[65536] = {0};
-    imap_read_line(Imap, Line, 65536);
+    imap_read_line(Imap, Line, 65536, TRUE);
 
     tokenizer Tokenizer = Tokenize(Line, strlen(Line));
     if(imap_parse_tagged_ok(&Tokenizer, Tag))
@@ -288,7 +301,7 @@ imap_read_search_response(imap *Imap, char *Tag)
     Response.Type = IMAP_RESPONSE_TYPE_SEARCH;
 
     char Line[65536] = {0};
-    imap_read_line(Imap, Line, 65536);
+    imap_read_line(Imap, Line, 65536, TRUE);
 
     for (;;) 
     {
@@ -316,7 +329,7 @@ imap_read_search_response(imap *Imap, char *Tag)
             break;
         }
 
-        imap_read_line(Imap, Line, 65536);
+        imap_read_line(Imap, Line, 65536, FALSE);
     }
 
     return Response;

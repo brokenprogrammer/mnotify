@@ -21,7 +21,7 @@ The ini file contains the following fields:
 * password: Your password.
 * opensite: The link you want to open in your browser when clicking on MNotify in the system tray.
 * folder: The folder you want to listen for incoming emails in.
-* pollingtimer: If the IMAP service doesn't support IDLE we need to perform polling. This is to specify how often to poll in seconds.
+* pollingtimer: If the IMAP service doesn't support IDLE we need to perform polling. This is to specify how often to poll in seconds. Do note that most mail providers has rate limiting so don't choose a too low value.
 
 When `mnotify.ini` contains your desired options then you can simply run `mnotify.exe` located in the build directory.
 
@@ -39,6 +39,8 @@ See the following:
 * Google: [https://support.google.com/accounts/answer/185833?hl=en](https://support.google.com/accounts/answer/185833?hl=en)
 * Yahoo: [https://help.yahoo.com/kb/SLN15241.html](https://help.yahoo.com/kb/SLN15241.html)
 * Outlook: Couldn't find official documentation of how to do this but I managed by first turning on 2FA then navigating to: `My Microsoft Account` -> `Security` -> `Advanced Security Options` -> Scroll down to find "App Passwords".
+
+If you find any problems or have additional feature requests please submit an issue.
 
 ## Thanks to
 
