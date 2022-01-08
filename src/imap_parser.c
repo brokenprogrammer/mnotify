@@ -214,68 +214,6 @@ parse_search_result(tokenizer *Tokenizer, imap_response *Response)
     return 1;
 }
 
-// static int 
-// imap_parse_search(imap *Imap, imap_response *Response, int CommandNumber)
-//{
-    // char ResponseBuffer[65536] = {0};
-    // int BufferLength = 0;
-    // int Received = imap_read(Imap, ResponseBuffer, 65536);
-    // while (Received >= 0 && 
-    //        !strstr(ResponseBuffer, "\r\n"))
-    // {
-    //     BufferLength += Received;
-    //     Received = imap_read(Imap, ResponseBuffer + BufferLength, 65536 - BufferLength);
-    // }
-
-    // if (Received <= 0)
-    // {
-    //     printf("Failed to read buffer!\n");
-    //     Response->Success = 0;
-    //     return -1;
-    // }
-
-//     char *Line;
-//     char *Temp;
-//     Line = strtok_s(ResponseBuffer, "\r\n", &Temp);
-//     do
-//     {
-//         tokenizer Tokenizer = Tokenize(Line, strlen(Line));
-
-//         token Token = PeekToken(&Tokenizer);
-//         while (Token.Type == Token_Space)
-//         {
-//             Token = GetToken(&Tokenizer);
-//         }
-
-//         if (Token.Type == Token_Identifier)
-//         {
-//             char Tag[10];
-//             sprintf(Tag, "A%03d", CommandNumber);
-//             if(imap_parse_tagged_ok(&Tokenizer, Tag))
-//             {
-//                 Response->Success = 1;
-//                 return 1;
-//             }
-//             else
-//             {
-//                 Response->Success = 0;
-//             }
-
-//             return 0;
-//         }
-        
-//         if (!parse_search_result(&Tokenizer, Response))
-//         {
-//             Response->Success = 0;
-//             return 0;
-//         }
-//     }
-//     while ((Line = strtok_s(NULL, "\r\n", &Temp)) != NULL);
-
-//     Response->Success = IMAP_PARSER_ERR_NOT_DONE;
-//     return 0;
-// }
-
 // NOTE(Oskar): Returns true if parse is done
 static int
 imap_parse_fetch_single(tokenizer *Tokenizer, imap_email_message *Email)
