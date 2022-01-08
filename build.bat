@@ -7,7 +7,7 @@ if not exist build mkdir build
 pushd build
 
 start /b /wait "" "rc.exe" /nologo -fo ./mnotify.res ../src/mnotify.rc
-start /b /wait "" "cl.exe" %compile_flags% ../src/main.c mnotify.res /link %link_flags% /SUBSYSTEM:WINDOWS /out:mnotify.exe
+start /b /wait "" "cl.exe" %compile_flags% ../src/mnotify.c mnotify.res /link %link_flags% /SUBSYSTEM:WINDOWS /out:mnotify.exe
 
 if not exist "mnotify.ini" copy "..\\mnotify.ini"
 

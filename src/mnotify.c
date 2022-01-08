@@ -25,6 +25,7 @@
 #pragma comment (lib, "winmm.lib")
 
 #include "tls.c"
+#include "mnotify.h"
 
 #define WM_MNOTIFY_ALREADY_RUNNING (WM_USER+1)
 #define WM_MNOTIFY_EMAIL_MESSAGE   (WM_USER+2)
@@ -54,10 +55,10 @@ static HWND GlobalWindow;
 static DWORD GlobalBackgroundThreadId;
 static HANDLE GlobalBackgroundThreadHandle;
 
-#include "imap.h"
+#include "imap_client.h"
 #include "tokenizer.c"
 #include "imap_parser.c"
-#include "imap.c"
+#include "imap_client.c"
 
 // 
 static imap_email_message *Email;
@@ -229,7 +230,7 @@ ThreadImapPolling(char *Host, int Port, char *Account, char *Password)
     for (;;)
     {
         imap Imap;
-        if (imap_init(&Imap, Host, Port) != 0)
+        if (!imap_init(&Imap, Host, Port))
         {
             printf("Imap connection failed.\n");
             return;
@@ -306,7 +307,7 @@ ThreadProc(LPVOID lpParameter)
     );
 
     imap Imap;
-    if (imap_init(&Imap, Host, Port) != 0)
+    if (!imap_init(&Imap, Host, Port))
     {
         printf("Imap connection failed.\n");
         return -1;

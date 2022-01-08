@@ -214,67 +214,67 @@ parse_search_result(tokenizer *Tokenizer, imap_response *Response)
     return 1;
 }
 
-static int 
-imap_parse_search(imap *Imap, imap_response *Response, int CommandNumber)
-{
-    char ResponseBuffer[65536] = {0};
-    int BufferLength = 0;
-    int Received = imap_read(Imap, ResponseBuffer, 65536);
-    while (Received >= 0 && 
-           !strstr(ResponseBuffer, "\r\n"))
-    {
-        BufferLength += Received;
-        Received = imap_read(Imap, ResponseBuffer + BufferLength, 65536 - BufferLength);
-    }
+// static int 
+// imap_parse_search(imap *Imap, imap_response *Response, int CommandNumber)
+//{
+    // char ResponseBuffer[65536] = {0};
+    // int BufferLength = 0;
+    // int Received = imap_read(Imap, ResponseBuffer, 65536);
+    // while (Received >= 0 && 
+    //        !strstr(ResponseBuffer, "\r\n"))
+    // {
+    //     BufferLength += Received;
+    //     Received = imap_read(Imap, ResponseBuffer + BufferLength, 65536 - BufferLength);
+    // }
 
-    if (Received <= 0)
-    {
-        printf("Failed to read buffer!\n");
-        Response->Success = 0;
-        return -1;
-    }
+    // if (Received <= 0)
+    // {
+    //     printf("Failed to read buffer!\n");
+    //     Response->Success = 0;
+    //     return -1;
+    // }
 
-    char *Line;
-    char *Temp;
-    Line = strtok_s(ResponseBuffer, "\r\n", &Temp);
-    do
-    {
-        tokenizer Tokenizer = Tokenize(Line, strlen(Line));
+//     char *Line;
+//     char *Temp;
+//     Line = strtok_s(ResponseBuffer, "\r\n", &Temp);
+//     do
+//     {
+//         tokenizer Tokenizer = Tokenize(Line, strlen(Line));
 
-        token Token = PeekToken(&Tokenizer);
-        while (Token.Type == Token_Space)
-        {
-            Token = GetToken(&Tokenizer);
-        }
+//         token Token = PeekToken(&Tokenizer);
+//         while (Token.Type == Token_Space)
+//         {
+//             Token = GetToken(&Tokenizer);
+//         }
 
-        if (Token.Type == Token_Identifier)
-        {
-            char Tag[10];
-            sprintf(Tag, "A%03d", CommandNumber);
-            if(imap_parse_tagged_ok(&Tokenizer, Tag))
-            {
-                Response->Success = 1;
-                return 1;
-            }
-            else
-            {
-                Response->Success = 0;
-            }
+//         if (Token.Type == Token_Identifier)
+//         {
+//             char Tag[10];
+//             sprintf(Tag, "A%03d", CommandNumber);
+//             if(imap_parse_tagged_ok(&Tokenizer, Tag))
+//             {
+//                 Response->Success = 1;
+//                 return 1;
+//             }
+//             else
+//             {
+//                 Response->Success = 0;
+//             }
 
-            return 0;
-        }
+//             return 0;
+//         }
         
-        if (!parse_search_result(&Tokenizer, Response))
-        {
-            Response->Success = 0;
-            return 0;
-        }
-    }
-    while ((Line = strtok_s(NULL, "\r\n", &Temp)) != NULL);
+//         if (!parse_search_result(&Tokenizer, Response))
+//         {
+//             Response->Success = 0;
+//             return 0;
+//         }
+//     }
+//     while ((Line = strtok_s(NULL, "\r\n", &Temp)) != NULL);
 
-    Response->Success = IMAP_PARSER_ERR_NOT_DONE;
-    return 0;
-}
+//     Response->Success = IMAP_PARSER_ERR_NOT_DONE;
+//     return 0;
+// }
 
 // NOTE(Oskar): Returns true if parse is done
 static int
@@ -403,140 +403,121 @@ imap_parse_fetch(imap *Imap, imap_response *Response, int CommandNumber)
 }
 
 static imap_response
-imap_parse(imap *Imap, imap_response_type ExpectedResponseType, int CommandNumber)
+imap_parse(imap *Imap, char *Line, imap_response_type ExpectedResponseType, int CommandNumber)
 {
     imap_response Response = {0};
     Response.Type = ExpectedResponseType;
 
-    char ResponseBuffer[65536] = {0};
-    if (imap_read(Imap, ResponseBuffer, 65536) <= 0)
+    tokenizer Tokenizer = Tokenize(Line, strlen(Line));
+
+    switch(Response.Type)
     {
-        printf("Failed to read buffer!\n");
-        Response.Success = 0;
-        return Response;
-    }
-
-    printf("Got response:\n\t%s\n", ResponseBuffer);
-    printf("Parsing ...\n");
-
-    char *Line;
-    char *Temp;
-    Line = strtok_s(ResponseBuffer, "\r\n", &Temp);
-    do
-    {
-        tokenizer Tokenizer = Tokenize(Line, strlen(Line));
-
-        switch(Response.Type)
+        case IMAP_RESPONSE_TYPE_PREAUTH:
         {
-            case IMAP_RESPONSE_TYPE_PREAUTH:
+            // NOTE(Oskar): Parse greeting
+            if (imap_parse_greeting(&Tokenizer, &Response))
             {
-                // NOTE(Oskar): Parse greeting
-                if (imap_parse_greeting(&Tokenizer, &Response))
-                {
-                    Response.Success = 1;
+                Response.Success = 1;
+            }
+            else
+            {
+                Response.Success = 0;
+            }
+            
+            return Response;
+        } break;
 
+        case IMAP_RESPONSE_TYPE_LOGIN:
+        {
+            // NOTE(Oskar): Check for optional CAPABILITY response
+            if (strstr(Tokenizer.Input, "CAPABILITY"))
+            {
+                if (ExpectTokenType(&Tokenizer, Token_Asterisk) != 0)
+                {
+                    Response.Success = 0;
+                }
+                GetToken(&Tokenizer);
+
+                if(imap_parse_capabilities(&Tokenizer, &Response))
+                {
+                    // continue;
                 }
                 else
                 {
                     Response.Success = 0;
                 }
-                
-                return Response;
-            } break;
+            }
 
-            case IMAP_RESPONSE_TYPE_LOGIN:
+            // NOTE(Oskar): Parse tagged ok message
+            char Tag[10];
+            sprintf(Tag, "A%03d", CommandNumber);
+            if (imap_parse_tagged_ok(&Tokenizer, Tag))
             {
-                // NOTE(Oskar): Check for optional CAPABILITY response
-                if (strstr(Tokenizer.Input, "CAPABILITY"))
-                {
-                    if (ExpectTokenType(&Tokenizer, Token_Asterisk) != 0)
-                    {
-                        Response.Success = 0;
-                    }
-                    GetToken(&Tokenizer);
-
-                    if(imap_parse_capabilities(&Tokenizer, &Response))
-                    {
-                        continue;
-                    }
-                    else
-                    {
-                        Response.Success = 0;
-                    }
-                }
-
-                // NOTE(Oskar): Parse tagged ok message
-                char Tag[10];
-                sprintf(Tag, "A%03d", CommandNumber);
-                if (imap_parse_tagged_ok(&Tokenizer, Tag))
-                {
-                    Response.Success = 1;
-                    return Response;
-                }
-            } break;
-            
-            case IMAP_RESPONSE_TYPE_EXAMINE:
-            {
-                // NOTE(Oskar): A series of untagged responses
-                token Token = PeekToken(&Tokenizer);
-                if (Token.Type == Token_Asterisk)
-                {
-                    // NOTE(Oskar): For now we don't care about theese flags.
-                    continue;
-                }
-                else
-                {
-                    char Tag[10];
-                    sprintf(Tag, "A%03d", CommandNumber);
-                    if(imap_parse_tagged_ok(&Tokenizer, Tag))
-                    {
-                        Response.Success = 1;
-                        return Response;
-                    }
-                }
-
-            } break;
-            
-            case IMAP_RESPONSE_TYPE_IDLE:
-            {
-                if (imap_parse_idle(&Tokenizer))
-                {
-                    Response.Success = 1;
-                }
-                else
-                {
-                    Response.Success = 0;
-                }
-
-                return Response;
-            } break;
-
-            case IMAP_RESPONSE_TYPE_IDLE_LISTEN:
-            {
-                Response.IdleMessageType = imap_parse_idle_message(&Tokenizer);
                 Response.Success = 1;
                 return Response;
-
-            } break;
-            
-            case IMAP_RESPONSE_TYPE_DONE:
+            }
+        } break;
+        
+        case IMAP_RESPONSE_TYPE_EXAMINE:
+        {
+            // NOTE(Oskar): A series of untagged responses
+            token Token = PeekToken(&Tokenizer);
+            if (Token.Type == Token_Asterisk)
+            {
+                // NOTE(Oskar): For now we don't care about theese flags.
+                // continue;
+            }
+            else
             {
                 char Tag[10];
                 sprintf(Tag, "A%03d", CommandNumber);
                 if(imap_parse_tagged_ok(&Tokenizer, Tag))
                 {
                     Response.Success = 1;
+                    return Response;
                 }
-                else
-                {
-                    Response.Success = 0;
-                }
+            }
 
-                return Response;
-            } break;
-        }
+        } break;
+        
+        case IMAP_RESPONSE_TYPE_IDLE:
+        {
+            if (imap_parse_idle(&Tokenizer))
+            {
+                Response.Success = 1;
+            }
+            else
+            {
+                Response.Success = 0;
+            }
+
+            return Response;
+        } break;
+
+        case IMAP_RESPONSE_TYPE_IDLE_LISTEN:
+        {
+            Response.IdleMessageType = imap_parse_idle_message(&Tokenizer);
+            Response.Success = 1;
+            return Response;
+
+        } break;
+        
+        case IMAP_RESPONSE_TYPE_DONE:
+        {
+            char Tag[10];
+            sprintf(Tag, "A%03d", CommandNumber);
+            if(imap_parse_tagged_ok(&Tokenizer, Tag))
+            {
+                Response.Success = 1;
+            }
+            else
+            {
+                Response.Success = 0;
+            }
+
+            return Response;
+        } break;
     }
-    while ((Line = strtok_s(NULL, "\r\n", &Temp)) != NULL);
 
     Response.Success = 0;
     return Response;
