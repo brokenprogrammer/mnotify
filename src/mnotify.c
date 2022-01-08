@@ -48,12 +48,12 @@
 static UINT WM_TASKBARCREATED;
 static HICON gIcon1;
 static HICON gIcon2;
-static wchar_t MailSite[256];
-static char MailFolder[256];
 
 static HWND GlobalWindow;
 static DWORD GlobalBackgroundThreadId;
 static HANDLE GlobalBackgroundThreadHandle;
+
+static mnotify_config GlobalConfiguration;
 
 #include "imap_client.h"
 #include "tokenizer.c"
@@ -117,6 +117,80 @@ RemoveTrayIcon(HWND Window)
 		.hWnd = Window,
 	};
 	Shell_NotifyIconW(NIM_DELETE, &Data);
+}
+
+static void 
+Win32FatalErrorMessage(char *Message) 
+{ 
+    MessageBox(NULL, Message, "Error", MB_OK); 
+    ExitProcess(-1); 
+}
+
+static void 
+Win32FatalErrorCode(char *Message)
+{ 
+    char *ErrorMessage;
+    DWORD LastError = GetLastError(); 
+
+    FormatMessageA(
+        FORMAT_MESSAGE_ALLOCATE_BUFFER | 
+        FORMAT_MESSAGE_FROM_SYSTEM |
+        FORMAT_MESSAGE_IGNORE_INSERTS,
+        NULL,
+        LastError,
+        MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+        (LPSTR)&ErrorMessage,
+        0, NULL );
+
+    int Characters = (lstrlen(ErrorMessage) + lstrlen(Message) + 40);
+    LPTSTR MessageBuffer = (LPTSTR)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, Characters * sizeof(CHAR));
+    StringCchPrintfA(MessageBuffer, Characters, "%s Error failed with error code %d: %s", 
+        Message, LastError, ErrorMessage); 
+
+    MessageBox(NULL, MessageBuffer, "Error", MB_OK); 
+
+    LocalFree(ErrorMessage);
+    HeapFree(GetProcessHeap(), 0, MessageBuffer);
+    ExitProcess(LastError); 
+}
+
+static void
+ReadConfigurationFileString(char *Section, char *Key, char *Out, int OutLength)
+{
+    GetPrivateProfileString(Section, Key, "", Out, OutLength, MNOTIFY_CONFIG_FILE);
+    if (strcmp(Out, "") == 0)
+    {
+        Win32FatalErrorCode("Reading Configuration failed, check your filename and values.");
+    }
+}
+
+static int
+ReadConfigurationFileInt(char *Section, char *Key)
+{
+    int Result = GetPrivateProfileInt(Section, Key, -1, MNOTIFY_CONFIG_FILE);
+    
+    if (Result == -1)
+    {
+        Win32FatalErrorCode("Reading Configuration failed, check your filename and values.");
+    }
+    
+    return Result;
+}
+
+static mnotify_config
+LoadConfiguration()
+{
+    mnotify_config Config = {0};
+
+    ReadConfigurationFileString("Account", "host",        Config.Host,     256);
+    ReadConfigurationFileString("Account", "accountname", Config.Account,  256);
+    ReadConfigurationFileString("Account", "password",    Config.Password, 256);
+    ReadConfigurationFileString("Account", "opensite",    Config.OpenSite, 256);
+    ReadConfigurationFileString("Account", "folder",      Config.Folder,   256);
+    Config.Port               = ReadConfigurationFileInt("Account", "port");
+    Config.PollingTimeSeconds = ReadConfigurationFileInt("Account", "pollingtimer");
+
+    return Config;
 }
 
 static LRESULT CALLBACK 
@@ -190,7 +264,7 @@ WindowProc(HWND Window, UINT Message, WPARAM WParam, LPARAM LParam)
             int Command = TrackPopupMenu(Menu, TPM_RETURNCMD | TPM_NONOTIFY, Mouse.x, Mouse.y, 0, Window, NULL);
             if (Command == CMD_MNOTIFY)
             {
-                ShellExecuteW(NULL, L"open", MailSite, NULL, NULL, SW_SHOWNORMAL);
+                ShellExecute(NULL, "open", GlobalConfiguration.OpenSite, NULL, NULL, SW_SHOWNORMAL);
             }
             else if (Command == CMD_QUIT)
             {
@@ -218,7 +292,7 @@ WindowProc(HWND Window, UINT Message, WPARAM WParam, LPARAM LParam)
 }
 
 static void
-ThreadImapPolling(char *Host, int Port, char *Account, char *Password)
+ImapPerformPolling(char *Host, int Port, char *Account, char *Password)
 {
     int PollingTimeSeconds = GetPrivateProfileInt (
         "Account",
@@ -242,7 +316,7 @@ ThreadImapPolling(char *Host, int Port, char *Account, char *Password)
             return;
         }
 
-        if(!imap_examine(&Imap, MailFolder))
+        if(!imap_examine(&Imap, GlobalConfiguration.Folder))
         {
             return;
         }
@@ -265,126 +339,108 @@ ThreadImapPolling(char *Host, int Port, char *Account, char *Password)
     }
 } 
 
-DWORD WINAPI
-ThreadProc(LPVOID lpParameter)
+static void
+ImapPerformIdle(char *Host, int Port, char *Account, char *Password)
 {
-    // NOTE(Oskar): Readon configuartion. Later some of this should be passed in
-    // lpParameter.
-    char Host[256];
-    char Account[256];
-    char Password[256];
-    GetPrivateProfileString (
-        "Account",
-        "host",
-        "", 
-        Host,
-        256,
-        MNOTIFY_CONFIG_FILE
-    );
-
-    int Port = GetPrivateProfileInt (
-        "Account",
-        "port",
-        -1,
-        MNOTIFY_CONFIG_FILE
-    );
-
-    GetPrivateProfileString (
-        "Account",
-        "accountname",
-        "",
-        Account,
-        256,
-        MNOTIFY_CONFIG_FILE
-    );
-    GetPrivateProfileString (
-        "Account",
-        "password",
-        "", 
-        Password,
-        256,
-        MNOTIFY_CONFIG_FILE
-    );
-
     imap Imap;
     if (!imap_init(&Imap, Host, Port))
     {
         printf("Imap connection failed.\n");
-        return -1;
+        return;
     }
     
     if(!imap_login(&Imap, Account, Password))
     {
         printf("Imap Login failed.\n");
+        return;
+    }
+
+    // NOTE(Oskar): MailFolder is read in the main thread.
+    if(!imap_examine(&Imap, GlobalConfiguration.Folder))
+    {
+        return;
+    }
+
+    for (;;)
+    {
+        if(!imap_idle(&Imap))
+        {
+            break;
+        }
+
+        imap_idle_message IdleMessage = IMAP_IDLE_MESSAGE_UNKNOWN;
+        while (IdleMessage != IMAP_IDLE_MESSAGE_EXISTS)
+        {
+            imap_response IdleResponse = imap_idle_listen(&Imap);
+            if (!IdleResponse.Success)
+            {
+                return;
+            }
+
+            IdleMessage = IdleResponse.IdleMessageType;
+        }
+
+        if (!imap_done(&Imap))
+        {
+            break;
+        }
+
+        imap_response SearchResult = imap_search(&Imap);
+        if (!SearchResult.Success)
+        {
+            break;
+        }
+
+        // NOTE(Oskar): Find out which emails we want to get
+        if (SearchResult.NumberOfNumbers != EmailCount)
+        {
+            PostMessageW(GlobalWindow, WM_MNOTIFY_EMAIL_CLEAR, 0, 0);
+
+            // TODO(Oskar): For later if we want to display the data somehow within the application.
+            // The parsing is broken through so need to fix that first. It dies on longer requests as we don't
+            // get the full imap message in one go from gmail and idk how to fix it.
+            // imap_response FetchResponse = imap_fetch(&Imap, SearchResult.SequenceNumbers, SearchResult.NumberOfNumbers);
+            // if (!FetchResponse.Success)
+            // {
+            //     break;
+            // }
+
+            PostMessageW(GlobalWindow, WM_MNOTIFY_EMAIL_MESSAGE, 0, (LPARAM)SearchResult.NumberOfNumbers);
+        }
+    }
+
+    imap_destroy(&Imap);
+}
+
+DWORD WINAPI
+ImapBackgroundThread(LPVOID lpParameter)
+{
+    imap Imap;
+    if (!imap_init(&Imap, GlobalConfiguration.Host, GlobalConfiguration.Port))
+    {
+        printf("Imap connection failed.\n");
+        return -1;
+    }
+    
+    if(!imap_login(&Imap, GlobalConfiguration.Account, GlobalConfiguration.Password))
+    {
+        printf("Imap Login failed.\n");
         return -1;
     }
 
+    imap_destroy(&Imap);
+
     if (Imap.HasIdle)
     {
-        // NOTE(Oskar): MailFolder is read in the main thread.
-        if(!imap_examine(&Imap, MailFolder))
-        {
-            return -1;
-        }
-
-        for (;;)
-        {
-            if(!imap_idle(&Imap))
-            {
-                break;
-            }
-
-            imap_idle_message IdleMessage = IMAP_IDLE_MESSAGE_UNKNOWN;
-            while (IdleMessage != IMAP_IDLE_MESSAGE_EXISTS)
-            {
-                imap_response IdleResponse = imap_idle_listen(&Imap);
-                if (!IdleResponse.Success)
-                {
-                    return 0;
-                }
-
-                IdleMessage = IdleResponse.IdleMessageType;
-            }
-
-            if (!imap_done(&Imap))
-            {
-                break;
-            }
-
-            imap_response SearchResult = imap_search(&Imap);
-            if (!SearchResult.Success)
-            {
-                break;
-            }
-
-            // NOTE(Oskar): Find out which emails we want to get
-            if (SearchResult.NumberOfNumbers != EmailCount)
-            {
-                PostMessageW(GlobalWindow, WM_MNOTIFY_EMAIL_CLEAR, 0, 0);
-
-                // TODO(Oskar): For later if we want to display the data somehow within the application.
-                // The parsing is broken through so need to fix that first. It dies on longer requests as we don't
-                // get the full imap message in one go from gmail and idk how to fix it.
-                // imap_response FetchResponse = imap_fetch(&Imap, SearchResult.SequenceNumbers, SearchResult.NumberOfNumbers);
-                // if (!FetchResponse.Success)
-                // {
-                //     break;
-                // }
-
-                PostMessageW(GlobalWindow, WM_MNOTIFY_EMAIL_MESSAGE, 0, (LPARAM)SearchResult.NumberOfNumbers);
-            }
-        }
+        ImapPerformIdle(GlobalConfiguration.Host, GlobalConfiguration.Port, GlobalConfiguration.Account, GlobalConfiguration.Password);
     }
     else
     {
-        imap_destroy(&Imap);
-
-        ThreadImapPolling(Host, Port, Account, Password);        
+        // NOTE(Oskar): No IDLE command support so we proceed with polling.
+        ImapPerformPolling(GlobalConfiguration.Host, GlobalConfiguration.Port, GlobalConfiguration.Account, GlobalConfiguration.Password); 
     }
-    
-    imap_destroy(&Imap);
 
-    return (0);
+    return 0;
 }
 
 int CALLBACK
@@ -413,24 +469,8 @@ WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLine, int ShowC
 	gIcon2 = LoadIconW(WindowClass.hInstance, MAKEINTRESOURCEW(2));
 	assert(gIcon1 && gIcon2);
 
-    // NOTE(Oskar): Setup site to open and folder to listen to
-    GetPrivateProfileStringW (
-        L"Account",
-        L"opensite",
-        L"", 
-        MailSite,
-        256,
-        MNOTIFY_CONFIG_FILEW
-    );
-
-    GetPrivateProfileString (
-        "Account",
-        "folder",
-        "", 
-        MailFolder,
-        256,
-        MNOTIFY_CONFIG_FILE
-    );
+    // NOTE(Oskar): Load configuration
+    GlobalConfiguration = LoadConfiguration();
 
     // NOTE(Oskar): Window Creation
     ATOM Atom = RegisterClassExW(&WindowClass);
@@ -447,8 +487,7 @@ WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLine, int ShowC
 
     // NOTE(Oskar): Creating background thread
     // TODO(Oskar): Later create 1 per email account?
-    GlobalBackgroundThreadHandle = CreateThread(0, 0, ThreadProc, 0, 0, &GlobalBackgroundThreadId);
-
+    GlobalBackgroundThreadHandle = CreateThread(0, 0, ImapBackgroundThread, 0, 0, &GlobalBackgroundThreadId);
     EmailCount = 0;
     for (;;)
     {
