@@ -236,13 +236,13 @@ ThreadImapPolling(char *Host, int Port, char *Account, char *Password)
             return;
         }
         
-        if(imap_login(&Imap, Account, Password) != 0)
+        if(!imap_login(&Imap, Account, Password))
         {
             printf("Imap Login failed.\n");
             return;
         }
 
-        if(imap_examine(&Imap, MailFolder) != 0)
+        if(!imap_examine(&Imap, MailFolder))
         {
             return;
         }
@@ -322,7 +322,7 @@ ThreadProc(LPVOID lpParameter)
     if (Imap.HasIdle)
     {
         // NOTE(Oskar): MailFolder is read in the main thread.
-        if(imap_examine(&Imap, MailFolder) != 0)
+        if(!imap_examine(&Imap, MailFolder))
         {
             return -1;
         }

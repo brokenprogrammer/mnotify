@@ -8,23 +8,30 @@ FailedResponse()
     return Response;
 }
 
-static int
-_imap_command(imap *Imap, char *Command, int CommandLength, int UsedCommandNumber)
+static BOOL
+imap_command(imap *Imap, BOOL IncrementCommandNumber, char *Format, ...)
 {
-    printf("Performing Imap command: %s\n", Command);
-    if (tls_write(&Imap->Socket, Command, CommandLength) != 0)
+    char CommandBuffer[32768];
+    size_t CommandLength = 0;
+
+    va_list ArgumentPointer;
+    va_start(ArgumentPointer, Format);
+    CommandLength = vsnprintf(CommandBuffer, 32768, Format, ArgumentPointer);
+    va_end(ArgumentPointer);
+
+    if (tls_write(&Imap->Socket, CommandBuffer, CommandLength) != 0)
     {
         printf("Failed!\n");
         tls_disconnect(&Imap->Socket);
-        return -1;
+        return FALSE;
     }
 
-    if (UsedCommandNumber)
+    if (IncrementCommandNumber)
     {
         ++Imap->CommandNumber;
     }
 
-    return 0;
+    return TRUE;
 }
 
 static int
@@ -365,13 +372,10 @@ static BOOL
 imap_login(imap *Imap, char *Login, char *Password)
 {
     int CommandNumber = Imap->CommandNumber;
-
     char CommandTag[10];
     sprintf(CommandTag, "A%03d", CommandNumber);
-    
-    char CommandBuffer[128];
-    int CommandLength = sprintf(CommandBuffer, "%s LOGIN %s %s\r\n", CommandTag, Login, Password);
-    if(_imap_command(Imap, CommandBuffer, CommandLength, 1) != 0)
+
+    if (!imap_command(Imap, TRUE, "%s %s %s %s\r\n", CommandTag, IMAP_COMMAND_LOGIN, Login, Password))
     {
         printf("Login failed, exiting!\n");
         return FALSE;
@@ -401,9 +405,7 @@ imap_examine(imap *Imap, char *Folder)
     char CommandTag[10];
     sprintf(CommandTag, "A%03d", CommandNumber);
 
-    char CommandBuffer[128];
-    int CommandLength = sprintf(CommandBuffer, "%s EXAMINE %s\r\n", CommandTag, Folder);
-    if(_imap_command(Imap, CommandBuffer, CommandLength, 1) != 0)
+    if (!imap_command(Imap, TRUE, "%s %s %s\r\n", CommandTag, IMAP_COMMAND_EXAMINE, Folder))
     {
         printf("Examine failed, exiting!\n");
         return FALSE;
@@ -424,10 +426,10 @@ imap_idle(imap *Imap)
 {
     // TODO(Oskar): Assert that Imap connection supports idle?
     int CommandNumber = Imap->CommandNumber;
+    char CommandTag[10];
+    sprintf(CommandTag, "A%03d", CommandNumber);
 
-    char CommandBuffer[128];
-    int CommandLength = sprintf(CommandBuffer, "A%03d IDLE\r\n", CommandNumber);
-    if(_imap_command(Imap, CommandBuffer, CommandLength, 1) != 0)
+    if (!imap_command(Imap, TRUE, "%s %s\r\n", CommandTag, IMAP_COMMAND_IDLE))
     {
         printf("Idle failed, exiting!\n");
         return FALSE;
@@ -452,9 +454,7 @@ imap_idle_listen(imap *Imap)
 static BOOL
 imap_done(imap *Imap)
 {
-    char CommandBuffer[128];
-    int CommandLength = sprintf(CommandBuffer, "DONE\r\n");
-    if(_imap_command(Imap, CommandBuffer, CommandLength, 0) != 0)
+    if (!imap_command(Imap, FALSE, "%s\r\n", IMAP_COMMAND_DONE))
     {
         printf("Done failed, exiting!\n");
         return FALSE;
@@ -488,15 +488,12 @@ imap_search(imap *Imap)
     }
 
     int CommandNumber = Imap->CommandNumber;
-
     char CommandTag[10];
     sprintf(CommandTag, "A%03d", CommandNumber);
 
-    char CommandBuffer[128];
-    int CommandLength = sprintf(CommandBuffer, "%s SEARCH %s\r\n", CommandTag, Keyword);
-    if(_imap_command(Imap, CommandBuffer, CommandLength, 1) != 0)
+     if (!imap_command(Imap, TRUE, "%s %s %s\r\n", CommandTag, IMAP_COMMAND_SEARCH, Keyword))
     {
-        printf("Search failed, exiting!\n");
+        printf("Done failed, exiting!\n");
         return FailedResponse();
     }
 
