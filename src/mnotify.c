@@ -313,7 +313,7 @@ ThreadProc(LPVOID lpParameter)
         return -1;
     }
     
-    if(imap_login(&Imap, Account, Password) != 0)
+    if(!imap_login(&Imap, Account, Password))
     {
         printf("Imap Login failed.\n");
         return -1;
@@ -329,7 +329,7 @@ ThreadProc(LPVOID lpParameter)
 
         for (;;)
         {
-            if(imap_idle(&Imap) != 0)
+            if(!imap_idle(&Imap))
             {
                 break;
             }

@@ -19,7 +19,7 @@ typedef struct
 typedef enum
 {
     IMAP_RESPONSE_TYPE_FAILED,
-    IMAP_RESPONSE_TYPE_PREAUTH,
+    IMAP_RESPONSE_TYPE_GREETING,
     IMAP_RESPONSE_TYPE_LOGIN,
     IMAP_RESPONSE_TYPE_EXAMINE,
     IMAP_RESPONSE_TYPE_IDLE,
@@ -39,7 +39,7 @@ typedef enum
 typedef struct
 {
     imap_response_type Type;
-    int Success;
+    BOOL Success;
     
     int ParsedCapabilities;
     int HasIdle;
@@ -49,7 +49,7 @@ typedef struct
         struct
         {
             imap_identified_provider Provider;
-        }; // Preauth response
+        }; // Greeting response
 
         // struct
         // {
