@@ -13,7 +13,6 @@
 #include <windowsx.h>
 #include <strsafe.h>
 #include <stdint.h>
-#include <timeapi.h>
 
 #pragma comment (lib, "kernel32.lib")
 #pragma comment (lib, "user32.lib")
@@ -218,10 +217,9 @@ WindowProc(HWND Window, UINT Message, WPARAM WParam, LPARAM LParam)
 }
 
 static void
-ThreadImapPolling(char *Host, int Port, char *Account, char *Password,
-     LARGE_INTEGER TickFrequency, int SleepIsGranular)
+ThreadImapPolling(char *Host, int Port, char *Account, char *Password)
 {
-    int PollingTime = GetPrivateProfileInt (
+    int PollingTimeSeconds = GetPrivateProfileInt (
         "Account",
         "pollingtimer",
         -1,
@@ -262,43 +260,13 @@ ThreadImapPolling(char *Host, int Port, char *Account, char *Password,
             PostMessageW(GlobalWindow, WM_MNOTIFY_EMAIL_MESSAGE, 0, (LPARAM)SearchResult.NumberOfNumbers);
         }
 
-        // NOTE(Oskar): Waiting mechanic
-        {
-            double DesiredSecondsPerPoll = PollingTime;
-            int64_t DesiredCounts = (int64_t)(DesiredSecondsPerPoll * TickFrequency.QuadPart);
-            int64_t CountsToWait = DesiredCounts;
-
-            LARGE_INTEGER StartWait;
-            LARGE_INTEGER EndWait;   
-
-            QueryPerformanceCounter(&StartWait);
-            while (CountsToWait > 0)
-            {
-                if (SleepIsGranular)
-                {
-                    DWORD TimeToSleep = (DWORD)(1000.0f * ((double)(CountsToWait) / TickFrequency.QuadPart));
-                    if (TimeToSleep > 1)
-                    {
-                        Sleep(TimeToSleep);
-                    }
-                }
-
-                QueryPerformanceCounter(&EndWait);
-                CountsToWait -= EndWait.QuadPart - StartWait.QuadPart;
-                StartWait = EndWait;
-            }
-        }
+        Sleep(PollingTimeSeconds * 1000);
     }
 } 
 
 DWORD WINAPI
 ThreadProc(LPVOID lpParameter)
 {
-    static LARGE_INTEGER TickFrequency;
-    QueryPerformanceFrequency(&TickFrequency);
-    int SleepIsGranular = (timeBeginPeriod(1) == TIMERR_NOERROR);
-
-
     // NOTE(Oskar): Readon configuartion. Later some of this should be passed in
     // lpParameter.
     char Host[256];
@@ -410,7 +378,7 @@ ThreadProc(LPVOID lpParameter)
     {
         imap_destroy(&Imap);
 
-        ThreadImapPolling(Host, Port, Account, Password, TickFrequency, SleepIsGranular);        
+        ThreadImapPolling(Host, Port, Account, Password);        
     }
     
     imap_destroy(&Imap);
