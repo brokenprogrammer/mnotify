@@ -31,12 +31,14 @@ The application has been tested against the following providers:
 
 * Google GMail
 * Yahoo
+* Outlook
 
 Note that for most providers they require you to generate an "App Password".
 See the following:
 
-* Google:[https://support.google.com/accounts/answer/185833?hl=en](https://support.google.com/accounts/answer/185833?hl=en)
+* Google: [https://support.google.com/accounts/answer/185833?hl=en](https://support.google.com/accounts/answer/185833?hl=en)
 * Yahoo: [https://help.yahoo.com/kb/SLN15241.html](https://help.yahoo.com/kb/SLN15241.html)
+* Outlook: Couldn't find official documentation of how to do this but I managed by first turning on 2FA then navigating to: `My Microsoft Account` -> `Security` -> `Advanced Security Options` -> Scroll down to find "App Passwords".
 
 ## Thanks to
 
