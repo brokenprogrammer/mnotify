@@ -1,341 +1,384 @@
 #define IMAP_PARSER_ERR_NOT_DONE 2
 
-static int
-imap_parse_tagged_ok(tokenizer *Tokenizer, char *Tag)
-{
-    // NOTE(Oskar): Expecting response in format:
-    // [Tag] OK
-    token Token = GetToken(Tokenizer);
-    if (!Token.Type == Token_Identifier ||
-        !strstr(Token.Text, Tag))
-    {
-        printf("Tag does not match\n");
-        return 0;
-    }
-    GetToken(Tokenizer); // Space
-
-    Token = GetToken(Tokenizer);
-    if (!Token.Type == Token_Identifier ||
-        !strstr(Token.Text, "OK"))
-    {
-        printf("Response is not OK\n");
-        return 0;
-    }
-
-    return 1;
-}
-
-static int
-imap_parse_capabilities(tokenizer *Tokenizer, imap_response *Response)
-{
-    Response->ParsedCapabilities = 1;
-    Response->HasIdle = 0;
-
-    token Token = GetToken(Tokenizer);
-    if (!strstr(Token.Text, "CAPABILITY"))
-    {
-        printf("Expected CAPABILITY identifier!\n");
-        return 0;
-    }
-
-    // NOTE(Oskar): Check one capability at the time.    
-    char Capability[128];
-    Token = GetToken(Tokenizer);
-    while (Token.Type != Token_EndOfStream)
-    {
-        if (Token.Type == Token_Identifier)
-        {
-            strncpy(Capability, Token.Text, Token.TextLength);
-            Capability[Token.TextLength] = '\0';
-            if (strstr(Capability, "IDLE"))
-            {
-                Response->HasIdle = 1;
-            }
-        }
-        Token = GetToken(Tokenizer);
-    }
-
-    return 1;
-}
-
-static imap_identified_provider
-imap_parse_greeting(tokenizer *Tokenizer, imap_response *Response)
-{
-    Response->Provider = IMAP_IDENTIFIED_PROVIDER_UNKNOWN;
-
-    // NOTE(Oskar): Expect untagged response in format:
-    // * Ok .. Gimap
-    if (ExpectTokenType(Tokenizer, Token_Asterisk) != 0)
-    {
-        printf("Failed to parse untagged greeting message!\n");
-        return 0;
-    }
-    GetToken(Tokenizer);
-
-    if (strstr(Tokenizer->Input, "Gimap"))
-    {
-        Response->Provider = IMAP_IDENTIFIED_PROVIDER_GMAIL;
-    }
-    else
-    {
-        token Token = GetToken(Tokenizer);
-
-        if (Token.Type == Token_Identifier &&
-            strstr(Token.Text, "OK"))
-        {
-            Token = GetToken(Tokenizer); // Space
-            Token = GetToken(Tokenizer);
-            if (Token.Type == Token_OpenBrace)
-            {
-                if (strstr(Token.Text, "CAPABILITY"))
-                {
-                    // NOTE(Oskar): Not 100% sure this is always guaranteed to be yahoo but for now sure.
-                    Response->Provider = IMAP_IDENTIFIED_PROVIDER_YAHOO;
-                    return imap_parse_capabilities(Tokenizer, Response);
-                }
-            }
-        }
-    }
-
-    return 1;
-}
-
-static int
-imap_parse_idle(tokenizer *Tokenizer)
-{
-    token PlusToken = GetToken(Tokenizer);
-    token Space = GetToken(Tokenizer);
-    token Idling = GetToken(Tokenizer);
-
-    if (PlusToken.Type == Token_Plus && 
-        Space.Type == Token_Space &&
-        Idling.Type == Token_Identifier)
-    {
-        if (strstr(Idling.Text, "idling"))
-        {
-            return 1;
-        }
-    }
-
-    return 0;
-}
-
-static imap_idle_message
-imap_parse_idle_message(tokenizer *Tokenizer)
-{
-    if (ExpectTokenType(Tokenizer, Token_Asterisk))
-    {
-        printf("Unexpected token, Expected '*'!\n");
-        return IMAP_IDLE_MESSAGE_UNKNOWN;
-    }
-
-    if (ExpectTokenType(Tokenizer, Token_Space))
-    {
-        printf("Unexpected token, Expected Space!\n");
-        return IMAP_IDLE_MESSAGE_UNKNOWN;
-    }
-
-    // TODO(Oskar): Double check that there is always a number here.
-    if (ExpectTokenType(Tokenizer, Token_Number))
-    {
-        printf("Unexpected token, Expected Space!\n");
-        return IMAP_IDLE_MESSAGE_UNKNOWN;
-    }
-
-    if (ExpectTokenType(Tokenizer, Token_Space))
-    {
-        printf("Unexpected token, Expected Space!\n");
-        return IMAP_IDLE_MESSAGE_UNKNOWN;
-    }
-
-    token Token = GetToken(Tokenizer);
-    if (Token.Type != Token_Identifier)
-    {
-        printf("Unexpected token, Expected Space!\n");
-        return IMAP_IDLE_MESSAGE_UNKNOWN;
-    }
-    else
-    {
-        if (strstr(Token.Text, "EXISTS"))
-        {
-            return IMAP_IDLE_MESSAGE_EXISTS;
-        }
-        else if(strstr(Token.Text, "EXPUNGE"))
-        {
-            return IMAP_IDLE_MESSAGE_EXPUNGE;
-        }
-        else
-        {
-            return IMAP_IDLE_MESSAGE_UNKNOWN;
-        }
-    }
-}
-
-// TODO(Oskar): This is broken if there are too many unseen emails cause 
-// two rows has to be parsed then.
-static int
-parse_search_result(tokenizer *Tokenizer, imap_response *Response)
-{
-    if (!Response->Initialized)
-    {
-        Response->NumberOfNumbers = 0;
-        Response->Initialized = 1;
-    }
-
-    if (!Response->ParsedTag)
-    {
-        if (ExpectTokenType(Tokenizer, Token_Asterisk))
-        {
-            printf("Unexpected token, Expected '*'!\n");
-            return 0;
-        }
-        GetToken(Tokenizer); // Space
-
-        token Token = GetToken(Tokenizer);
-        if (Token.Type != Token_Identifier &&
-            strstr(Token.Text, "SEARCH"))
-        {
-            return 0;
-        }
-
-        Response->ParsedTag = 1;
-    }
-
-    token Token = GetToken(Tokenizer);
-    while (Token.Type != Token_EndOfStream) 
-    {
-        if (Token.Type == Token_Number)
-        {
-            Response->SequenceNumbers[Response->NumberOfNumbers++] = Token.I32;
-        }
-        Token = GetToken(Tokenizer);
-    }
-
-    return 1;
-}
-
-// NOTE(Oskar): Returns true if parse is done
-static int
-imap_parse_fetch_single(tokenizer *Tokenizer, imap_email_message *Email)
+static BOOL
+imap_parse_is_atom(tokenizer *Tokenizer)
 {
     token Token = PeekToken(Tokenizer);
-    if (Token.Type == Token_Asterisk)
+
+    // NOTE(Oskar): This is not 100% according to RFC but we don't use Atoms
+    // atom's right now in the exact same sense. We just use it to identify tags
+    // at the moment.
+    if (Token.Type == Token_OpenParen    ||
+        Token.Type == Token_CloseParen   ||
+        Token.Type == Token_CloseParen   ||
+        Token.Type == Token_OpenBracket  ||
+        Token.Type == Token_CloseBracket ||
+        Token.Type == Token_Space        ||
+        Token.Type == Token_Percent      ||
+        Token.Type == Token_OpenBrace    ||
+        Token.Type == Token_CloseBrace)
     {
-        GetToken(Tokenizer);
-        GetToken(Tokenizer); // Space
-
-        Token = GetToken(Tokenizer);
-        if (Token.Type != Token_Number)
-        {
-            //Email->Error = 1;
-            return 0;
-        }
-
-        Email->SequenceNumber = Token.I32;
+        return FALSE;
     }
 
-    if (Token.Type == Token_Identifier)
-    {
-        if (strstr(Token.Text, "Subject"))
-        {
-            GetToken(Tokenizer); // Subject
-            GetToken(Tokenizer); // :
-            GetToken(Tokenizer); // Space
-            sprintf(Email->Subject, Token.Text);
-        }
-        else if (strstr(Token.Text, "From"))
-        {
-            GetToken(Tokenizer); // From
-            GetToken(Tokenizer); // :
-            GetToken(Tokenizer); // Space
-            sprintf(Email->From, Token.Text);
-        }
-        else if (strstr(Token.Text, "Date"))
-        {
-            GetToken(Tokenizer); // Date
-            GetToken(Tokenizer); // :
-            GetToken(Tokenizer); // Space
-            sprintf(Email->Date, Token.Text);
-        }
-    }
-    else if (Token.Type == Token_CloseParen)
-    {
-        return 1;
-    }
-    else 
-    {
-        return 0;
-    }
-
-    return 0;
+    return TRUE;
 }
 
-static int
-imap_parse_fetch(imap *Imap, imap_response *Response, int CommandNumber)
+static imap_response_status
+imap_parse_response_status(token Name)
 {
-    char ResponseBuffer[65536] = {0};
-    int BufferLength = 0;
-    int Received = imap_read(Imap, ResponseBuffer, 65536);
-    while (Received >= 0 && 
-           !strstr(ResponseBuffer, "\r\n"))
+    if (strncmp(Name.Text, "OK", Name.TextLength) == 0)
     {
-        BufferLength += Received;
-        Received = imap_read(Imap, ResponseBuffer + BufferLength, 65536 - BufferLength);
+        return IMAP_RESPONSE_STATUS_OK;
+    }
+    else if (strncmp(Name.Text, "NO", Name.TextLength) == 0)
+    {
+        return IMAP_RESPONSE_STATUS_OK;
+    }
+    else if (strncmp(Name.Text, "BAD", Name.TextLength) == 0)
+    {
+        return IMAP_RESPONSE_STATUS_OK;
+    }
+    else if (strncmp(Name.Text, "PREAUTH", Name.TextLength) == 0)
+    {
+        return IMAP_RESPONSE_STATUS_OK;
+    }
+    else if (strncmp(Name.Text, "BYE", Name.TextLength) == 0)
+    {
+        return IMAP_RESPONSE_STATUS_OK;
+    }
+    else
+    {
+        return IMAP_RESPONSE_STATUS_INVALID;
+    }
+}
+
+static BOOL
+imap_parse_response_list(tokenizer *Tokenizer, 
+    imap_response_data *Data, unsigned int *DataCount)
+{
+    if (ExpectTokenType(Tokenizer, Token_OpenParen))
+    {
+        // NOTE(Oskar): Missing open paren
+        return FALSE;
     }
 
-    if (Received <= 0)
+    if (!imap_parse_response_data(Tokenizer, Data, DataCount))
     {
-        printf("Failed to read buffer!\n");
-        Response->Success = 0;
-        return -1;
+        // NOTE(Oskar): Invalid list input
+        return FALSE;
     }
 
-    imap_email_message *CurrentEmail = &Response->Emails[Response->ParsedEmails];
-
-    char *Line;
-    char *Temp;
-    Line = strtok_s(ResponseBuffer, "\r\n", &Temp);
-    do
+    if (ExpectTokenType(Tokenizer, Token_CloseParen))
     {
-        tokenizer Tokenizer = Tokenize(Line, strlen(Line));
+        // NOTE(Oskar): Missing closing paren
+        return FALSE;
+    }
 
-        if (Response->Emails[Response->ParsedEmails].Error)
+    return TRUE;
+}
+
+static BOOL
+imap_parse_response_data(tokenizer *Tokenizer, 
+    imap_response_data *Data, unsigned int *DataCount)
+{
+    for (;;)
+    {
+        token Token = PeekToken(Tokenizer);
+
+        BOOL Proceeed = TRUE;
+        char Content[256];
+        switch (Token.Type)
         {
-            Response->Success = 0;
-            return -1;
-        }
-        
-        if (Response->ActiveParse)
-        {
-            if (imap_parse_fetch_single(&Tokenizer, CurrentEmail))
+            case Token_OpenBracket:
             {
-                Response->ActiveParse = 0;
-                Response->ParsedEmails++;
-                CurrentEmail = &Response->Emails[Response->ParsedEmails];
-            }
-        }
-        else
-        {
-            token Token = PeekToken(&Tokenizer);
-            if (Token.Type == Token_Asterisk)
-            {
-                Response->ActiveParse = 1;
-                imap_parse_fetch_single(&Tokenizer, CurrentEmail);
-            }
-            else
-            {
-                char Tag[10];
-                sprintf(Tag, "A%03d", CommandNumber);
-                if(imap_parse_tagged_ok(&Tokenizer, Tag))
+                // TODO(Oskar): Parse Literal, for mnotify we can ignore for now since we don't use fetch
+                while (Token.Type != Token_CloseBracket)
                 {
-                    Response->Success = 1;
-                    return 1;
+                    if (Token.Type == Token_Unknown ||
+                        Token.Type == Token_EndOfLine ||
+                        Token.Type == Token_EndOfStream)
+                    {
+                        // Parsing error
+                        return FALSE;
+                    }
+                    Token = GetToken(Tokenizer);
+                }
+            } break;
+
+            case Token_String:
+            {
+                sprintf(Content, "%.*s", Token.TextLength, Token.Text);
+            } break;
+
+            case Token_OpenParen:
+            {
+                if (!imap_parse_response_list(Tokenizer, Data, DataCount))
+                {
+                    // NOTE(Oskar): Failed to parse list.
+                    return FALSE;
+                }
+
+                Proceeed = FALSE;
+            } break;
+            case Token_CloseParen:
+            {
+                Proceeed = FALSE;
+            } break;
+            case Token_EndOfLine:
+            {
+                return TRUE;
+            } break;
+            default:
+            {
+                // NOTE(Oskar): Just default to reading an atom
+                sprintf(Content, "%.*s", Token.TextLength, Token.Text);                
+            } break;
+        }
+
+        if (Proceeed)
+        {
+            sprintf(Data[(*DataCount)++].Value, "%s", Content);
+            GetToken(Tokenizer);
+        }
+
+        // NOTE(Oskar): Check if next token is an indicator of us ending the fields parse.
+        Token = PeekToken(Tokenizer);
+        if (Token.Type == Token_Unknown     ||
+            Token.Type == Token_EndOfLine   ||
+            Token.Type == Token_EndOfStream ||
+            Token.Type == Token_CloseParen  ||
+            Token.Type == Token_CloseBrace)
+        {
+            return TRUE;   
+        }
+
+        if (ExpectTokenType(Tokenizer, Token_Space))
+        {
+            // NOTE(Oskar): Missing space
+            return FALSE;
+        }
+    }
+
+    return FALSE;
+}
+
+static imap_response_code
+imap_parse_response_code(char *Name)
+{
+    if (strcmp(Name, "ALERT") == 0)
+    {
+        return IMAP_RESPONSE_CODE_ALERT;
+    }
+    else if (strcmp(Name, "BADCHARSET") == 0)
+    {
+        return IMAP_RESPONSE_CODE_BADCHARSET;
+    }
+    else if (strcmp(Name, "CAPABILITY") == 0)
+    {
+        return IMAP_RESPONSE_CODE_CAPABILITY;
+    }
+    else if (strcmp(Name, "PARSE") == 0)
+    {
+        return IMAP_RESPONSE_CODE_PARSE;
+    }
+    else if (strcmp(Name, "PERMANENTFLAGS") == 0)
+    {
+        return IMAP_RESPONSE_CODE_PERMANENTFLAGS;
+    }
+    else if (strcmp(Name, "READ-ONLY") == 0)
+    {
+        return IMAP_RESPONSE_CODE_READ_ONLY;
+    }
+    else if (strcmp(Name, "READ-WRITE") == 0)
+    {
+        return IMAP_RESPONSE_CODE_READ_WRITE;
+    }
+    else if (strcmp(Name, "TRYCREATE") == 0)
+    {
+        return IMAP_RESPONSE_CODE_TRYCREATE;
+    }
+    else if (strcmp(Name, "UIDNEXT") == 0)
+    {
+        return IMAP_RESPONSE_CODE_UIDNEXT;
+    }
+    else if (strcmp(Name, "UIDVALIDITY") == 0)
+    {
+        return IMAP_RESPONSE_CODE_UIDVALIDITY;
+    }
+    else if (strcmp(Name, "UNSEEN") == 0)
+    {
+        return IMAP_RESPONSE_CODE_UNSEEN;
+    }
+    else
+    {
+        return IMAP_RESPONSE_CODE_INVALID;
+    }
+}
+
+static BOOL
+imap_parse_response_code_and_data(tokenizer *Tokenizer, imap_response *Response)
+{
+    if (ExpectTokenType(Tokenizer, Token_OpenBrace))
+    {
+        // NOTE(Oskar): Missing opening brace
+        return FALSE;
+    }
+
+    if (!imap_parse_response_data(Tokenizer, Response->Data, &Response->DataCount))
+    {
+        printf("Error: Failed to parse data!\n");
+        return FALSE;
+    }
+
+    if (Response->DataCount == 0)
+    {
+        // Parse Error no data
+    }
+
+    // NOTE(Oskar): Use First field as Code.
+    Response->Code = imap_parse_response_code(Response->Data[0].Value);
+
+    // NOTE(Oskar): Pushing all fields back
+    for (int Index = 0; Index < Response->DataCount - 1; ++Index)
+    {
+        Response->Data[Index] = Response->Data[Index + 1];
+    }
+    Response->DataCount--;
+
+    if (ExpectTokenType(Tokenizer, Token_CloseBrace))
+    {
+        printf("Error Missing close brace!\n");
+        return FALSE;
+    }
+
+    return TRUE;
+}
+
+static BOOL
+imap_parse_response_info(tokenizer *Tokenizer, char *Out)
+{
+    int OutLength = 0;
+    token Token = GetToken(Tokenizer);
+    while (Token.Type != Token_EndOfLine &&
+           Token.Type != Token_EndOfStream)
+    {
+        OutLength += sprintf(Out + OutLength, "%.*s", Token.TextLength, Token.Text);
+        Token = GetToken(Tokenizer);
+    }
+
+    return TRUE;
+}
+
+static imap_response
+imap_parse_response(imap_parser *Parser)
+{
+    imap_response Response = {0};
+    Response.Type = IMAP_RESPONSE_TYPE_UNKNOWN;
+    Response.Tag[0] = 0;
+    Response.Status = IMAP_RESPONSE_CODE_INVALID;
+    Response.DataCount = 0;
+    Response.StatusCode = 0;
+    Response.Code = IMAP_RESPONSE_CODE_INVALID;
+    Response.Info[0] = 0;
+
+    for(int Index = 0; Index < ArrayCount(Response.Data); ++Index)
+    {
+        Response.Data[Index].Value[0] = 0;
+    }
+
+
+    if (!imap_parse_is_atom(&Parser->Tokenizer))
+    {
+        Parser->HasError = TRUE;
+        sprintf(Parser->Error, "%s", "Response tag is invalid.");
+        
+        return Response;
+    }
+
+    token Tag = GetToken(&Parser->Tokenizer);
+
+    if (Tag.Type == Token_Plus) // Continuation response
+    {
+        Response.Type = IMAP_RESPONSE_TYPE_CONTINUATION;
+        token Atom = GetToken(&Parser->Tokenizer);
+        
+        if (!imap_parse_response_info(&Parser->Tokenizer, Response.Info))
+        {
+            Parser->HasError = TRUE;
+            sprintf(Parser->Error, "%s", "Response contains invalid ending.");
+            
+            return Response;
+        }
+
+        return Response;
+    }
+
+    if (ExpectTokenType(&Parser->Tokenizer, Token_Space))
+    {
+        Parser->HasError = TRUE;
+        sprintf(Parser->Error, "%s", "Response contains invalid format of input.");
+
+        return Response;
+    }
+
+    // NOTE(Oskar): Can be both data or status type. We first try with status.
+    tokenizer StatusTokenizer = Parser->Tokenizer;
+    token Atom = GetToken(&StatusTokenizer);
+    if (!ExpectTokenType(&StatusTokenizer, Token_Space))
+    {
+        imap_response_status Status = imap_parse_response_status(Atom);
+        if (Status != IMAP_RESPONSE_STATUS_INVALID)
+        {
+            Response.Type = IMAP_RESPONSE_TYPE_STATUS;
+            sprintf(Response.Tag, "%.*s", Tag.TextLength, Tag.Text);
+            Response.Status = Status;
+
+            token NextToken = PeekToken(&StatusTokenizer);
+            if (NextToken.Type == Token_OpenBrace)
+            {
+                // NOTE(Oskar): Has code and arguments, Example
+                // * OK [UNSEEN 12]
+                if (!imap_parse_response_code_and_data(&StatusTokenizer, &Response))
+                {
+                    Parser->HasError = TRUE;
+                    sprintf(Parser->Error, "%s", "Response contains invalid format section input.");
+                    
+                    return Response;
                 }
             }
+
+            if (!imap_parse_response_info(&StatusTokenizer, Response.Info))
+            {
+                Parser->HasError = TRUE;
+                sprintf(Parser->Error, "%s", "Response contains invalid ending.");
+                
+                return Response;
+            }
+
+            return Response;
         }
     }
-    while ((Line = strtok_s(NULL, "\r\n", &Temp)) != NULL);
 
-    Response->Success = IMAP_PARSER_ERR_NOT_DONE;
-    return 0;
+    // NOTE(Oskar): It is not a status response so we parse it as data.
+    Response.Type = IMAP_RESPONSE_TYPE_DATA;
+    if (!imap_parse_response_data(&Parser->Tokenizer, Response.Data, &Response.DataCount))
+    {
+        Parser->HasError = TRUE;
+        sprintf(Parser->Error, "%s", "Error parsing data section.");
+        
+        return Response;
+    } 
+
+    return Response;
+}
+
+static imap_parser
+imap_create_parser(char *Buffer, unsigned int BufferLength)
+{
+    imap_parser Parser = {0};
+    Parser.HasError = FALSE;
+    Parser.Error[0] = '\0';
+    Parser.Tokenizer = Tokenize(Buffer, BufferLength);
+    return Parser;
 }

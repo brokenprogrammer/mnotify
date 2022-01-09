@@ -9,32 +9,37 @@
 
 typedef enum
 {
-    IMAP_IDENTIFIED_PROVIDER_GMAIL,
-    IMAP_IDENTIFIED_PROVIDER_YAHOO,
-    IMAP_IDENTIFIED_PROVIDER_UNKNOWN,
-} imap_identified_provider;
-
-typedef struct
-{
-    int Error;
-    int SequenceNumber;
-    char *Subject;
-    char *From;
-    char *Date;
-} imap_email_message;
+    IMAP_RESPONSE_TYPE_UNKNOWN,
+    IMAP_RESPONSE_TYPE_STATUS,
+    IMAP_RESPONSE_TYPE_DATA,
+    IMAP_RESPONSE_TYPE_CONTINUATION,
+} imap_response_type;
 
 typedef enum
 {
-    IMAP_RESPONSE_TYPE_FAILED,
-    IMAP_RESPONSE_TYPE_GREETING,
-    IMAP_RESPONSE_TYPE_LOGIN,
-    IMAP_RESPONSE_TYPE_EXAMINE,
-    IMAP_RESPONSE_TYPE_IDLE,
-    IMAP_RESPONSE_TYPE_IDLE_LISTEN,
-    IMAP_RESPONSE_TYPE_DONE,
-    IMAP_RESPONSE_TYPE_SEARCH,
-    IMAP_RESPONSE_TYPE_FETCH,
-} imap_response_type;
+    IMAP_RESPONSE_STATUS_INVALID,
+    IMAP_RESPONSE_STATUS_OK,
+    IMAP_RESPONSE_STATUS_NO,
+    IMAP_RESPONSE_STATUS_BAD,
+    IMAP_RESPONSE_STATUS_PREAUTH,
+    IMAP_RESPONSE_STATUS_BYE,
+} imap_response_status;
+
+typedef enum
+{
+    IMAP_RESPONSE_CODE_INVALID,
+    IMAP_RESPONSE_CODE_ALERT,
+    IMAP_RESPONSE_CODE_BADCHARSET,
+    IMAP_RESPONSE_CODE_CAPABILITY,
+    IMAP_RESPONSE_CODE_PARSE,
+    IMAP_RESPONSE_CODE_PERMANENTFLAGS,
+    IMAP_RESPONSE_CODE_READ_ONLY,
+    IMAP_RESPONSE_CODE_READ_WRITE,
+    IMAP_RESPONSE_CODE_TRYCREATE,
+    IMAP_RESPONSE_CODE_UIDNEXT,
+    IMAP_RESPONSE_CODE_UIDVALIDITY,
+    IMAP_RESPONSE_CODE_UNSEEN,
+} imap_response_code;
 
 typedef enum
 {
@@ -45,56 +50,41 @@ typedef enum
 
 typedef struct
 {
+    int NumberOfMails;
+    BOOL Error;
+} imap_search_response;
+
+typedef struct
+{
+    char Value[256];
+} imap_response_data;
+
+typedef struct
+{
     imap_response_type Type;
-    BOOL Success;
-    
-    int ParsedCapabilities;
-    int HasIdle;
-    
-    union
-    {
-        struct
-        {
-            imap_identified_provider Provider;
-        }; // Greeting response
 
-        // struct
-        // {
-        // }; // Login capability response
+    char Tag[128];
 
-        struct
-        {
-            imap_idle_message IdleMessageType;
-        }; // Idle message
+    imap_response_data Data[128];
+    unsigned int DataCount;
 
-        struct
-        {
-            int Initialized;
-            int ParsedTag;
+    imap_response_status Status;
+    char *StatusCode;
 
-            // TODO(Oskar): Perhaps more depending on how many unread emails.. No idea how many
-            // numbers that IMAP can respond with.
-            int SequenceNumbers[4096];
-            int NumberOfNumbers;
-        }; // Search response
+    imap_response_code Code;
 
-        struct
-        {
-            int ActiveParse;
-            imap_email_message *Emails;
-            int TotalNumberOfEmails;
-            int ParsedEmails;
-        }; // Fetch response
-    };
+    char Info[256];
+
 } imap_response;
+
 
 typedef struct
 {
     tls_socket Socket;
 
-    int ParsedCapabilities;
-    int HasIdle;
-    int HasRecent;
+    BOOL ParsedCapabilities;
+    BOOL HasIdle;
+    BOOL HasRecent;
 
     int CommandNumber;
 } imap;

@@ -183,7 +183,7 @@ GetToken(tokenizer *Tokenizer)
         // case '.':  {Token.Type = Token_Dot;} break;
         case '@':  {Token.Type = Token_At;} break;
         case '%':  {Token.Type = Token_Percent; } break;
-        case '$':  {Token.Type = Token_Dollar; } break;
+        // case '$':  {Token.Type = Token_Dollar; } break;
         case '+':  {Token.Type = Token_Plus; } break;
 
         case '"':
@@ -273,7 +273,7 @@ GetToken(tokenizer *Tokenizer)
                     MoveForward(Tokenizer, 2);
                 }
             }
-            else if (IsAlpha(C) || (C == '.') || (C == '/') || (C == '%'))
+            else if (IsAlpha(C) || (C == '.') || (C == '/') || (C == '%') || (C == '\\') || (C == '$'))
             {
                 Token.Type = Token_Identifier;
 
@@ -281,7 +281,10 @@ GetToken(tokenizer *Tokenizer)
                         IsNumber(Tokenizer->At[0]) ||
                         (Tokenizer->At[0] == '_') ||
                         (Tokenizer->At[0] == '.') ||
-                        (Tokenizer->At[0] == '/'))
+                        (Tokenizer->At[0] == '/') ||
+                        (Tokenizer->At[0] == '-') ||
+                        (Tokenizer->At[0] == '+') || 
+                        (Tokenizer->At[0] == '='))
                 {
                     MoveForward(Tokenizer, 1);
                 }

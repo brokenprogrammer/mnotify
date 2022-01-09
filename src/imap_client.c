@@ -1,13 +1,3 @@
-static imap_response
-FailedResponse()
-{
-    imap_response Response = {0};
-    Response.Type = IMAP_RESPONSE_TYPE_FAILED;
-    Response.Success = 0;
-
-    return Response;
-}
-
 static BOOL
 imap_command(imap *Imap, BOOL IncrementCommandNumber, char *Format, ...)
 {
@@ -122,217 +112,18 @@ imap_read_line(imap *Imap, char *Buffer, int BufferSize, BOOL ClearBuffer)
     return Received;
 }
 
-static imap_response
-imap_read_greeting_response(imap *Imap)
+static void
+imap_read_capabilities(imap *Imap, imap_response_data *Data, unsigned int DataCount)
 {
-    imap_response Response = {0};
-    Response.Type = IMAP_RESPONSE_TYPE_GREETING;
-
-    char Line[65536] = {0};
-    imap_read_line(Imap, Line, 65536, TRUE);
-    
-    tokenizer Tokenizer = Tokenize(Line, strlen(Line));
-    if (imap_parse_greeting(&Tokenizer, &Response))
+    for (unsigned int Index = 0; Index < DataCount; ++Index)
     {
-        Response.Success = TRUE;
-    }
-    else
-    {
-        Response.Success = FALSE;
-    }
-
-    return Response;
-}
-
-static imap_response
-imap_read_login_response(imap *Imap, char *Tag)
-{
-    imap_response Response = {0};
-    Response.Type = IMAP_RESPONSE_TYPE_LOGIN;
-
-    char Line[65536] = {0};
-    imap_read_line(Imap, Line, 65536, TRUE);
-    
-    for (;;)
-    {
-        tokenizer Tokenizer = Tokenize(Line, strlen(Line));
-        
-        if (StrStrA(Tokenizer.Input, "CAPABILITY") != NULL)
+        if (strcmp(Data[Index].Value, "IDLE") == 0)
         {
-            if (ExpectTokenType(&Tokenizer, Token_Asterisk) != 0)
-            {
-                Response.Success = FALSE;
-            }
-            GetToken(&Tokenizer);
-
-            if(imap_parse_capabilities(&Tokenizer, &Response))
-            {
-                imap_read_line(Imap, Line, 65536, FALSE);
-                continue;
-            }
-            else
-            {
-                Response.Success = FALSE;
-                break;
-            }
-        }
-
-        // NOTE(Oskar): Parse tagged ok message
-        if (imap_parse_tagged_ok(&Tokenizer, Tag))
-        {
-            Response.Success = TRUE;
-            break;
-        }
-
-        imap_read_line(Imap, Line, 65536, FALSE);
-    }
-
-    return Response;
-}
-
-static imap_response
-imap_read_examine_response(imap *Imap, char *Tag)
-{
-    imap_response Response = {0};
-    Response.Type = IMAP_RESPONSE_TYPE_EXAMINE;
-
-    char Line[65536] = {0};
-    imap_read_line(Imap, Line, 65536, TRUE);
-
-    for (;;)
-    {
-        tokenizer Tokenizer = Tokenize(Line, strlen(Line));
-        token Token = PeekToken(&Tokenizer);
-        if (Token.Type == Token_Asterisk)
-        {
-            // NOTE(Oskar): For now we don't care about theese flags.
-            imap_read_line(Imap, Line, 65536, FALSE);
-            continue;
-        }
-        else
-        {
-            if(imap_parse_tagged_ok(&Tokenizer, Tag))
-            {
-                Response.Success = TRUE;
-                break;
-            }
-            else
-            {
-                Response.Success = FALSE;
-                break;
-            }
+            Imap->HasIdle = TRUE;
         }
     }
 
-    return Response;
-}
-
-static imap_response
-imap_read_idle_response(imap *Imap)
-{
-    imap_response Response = {0};
-    Response.Type = IMAP_RESPONSE_TYPE_IDLE;
-
-    char Line[65536] = {0};
-    imap_read_line(Imap, Line, 65536, TRUE);
-
-    tokenizer Tokenizer = Tokenize(Line, strlen(Line));
-    if (imap_parse_idle(&Tokenizer))
-    {
-        Response.Success = TRUE;
-    }
-    else
-    {
-        Response.Success = FALSE;
-    }
-
-    return Response;
-}
-
-static imap_response
-imap_read_idle_listen_response(imap *Imap)
-{
-    imap_response Response = {0};
-    Response.Type = IMAP_RESPONSE_TYPE_IDLE_LISTEN;
-
-    char Line[65536] = {0};
-    int LineLength = imap_read_line(Imap, Line, 65536, TRUE);
-
-    if (LineLength > 0)
-    {
-        tokenizer Tokenizer = Tokenize(Line, strlen(Line));
-        Response.IdleMessageType = imap_parse_idle_message(&Tokenizer);
-        Response.Success = 1;
-    }
-    else
-    {
-        Response.Success = 0;
-    }
-
-    return Response;
-}
-
-static imap_response
-imap_read_done_response(imap *Imap, char *Tag)
-{
-    imap_response Response = {0};
-    Response.Type = IMAP_RESPONSE_TYPE_IDLE_LISTEN;
-
-    char Line[65536] = {0};
-    imap_read_line(Imap, Line, 65536, TRUE);
-
-    tokenizer Tokenizer = Tokenize(Line, strlen(Line));
-    if(imap_parse_tagged_ok(&Tokenizer, Tag))
-    {
-        Response.Success = TRUE;
-    }
-    else
-    {
-        Response.Success = FALSE;
-    }
-
-    return Response;
-}
-
-static imap_response
-imap_read_search_response(imap *Imap, char *Tag)
-{
-    imap_response Response = {0};
-    Response.Type = IMAP_RESPONSE_TYPE_SEARCH;
-
-    char Line[65536] = {0};
-    imap_read_line(Imap, Line, 65536, TRUE);
-
-    for (;;) 
-    {
-        tokenizer Tokenizer = Tokenize(Line, strlen(Line));
-
-        token Token = PeekToken(&Tokenizer);
-        if (Token.Type == Token_Identifier)
-        {
-            if(imap_parse_tagged_ok(&Tokenizer, Tag))
-            {
-                Response.Success = TRUE;
-                break;
-            }
-            else
-            {
-                Response.Success = FALSE;
-            }
-
-            break;
-        }
-
-        if (!parse_search_result(&Tokenizer, &Response))
-        {
-            Response.Success = FALSE;
-            break;
-        }
-
-        imap_read_line(Imap, Line, 65536, FALSE);
-    }
-
-    return Response;
+    Imap->ParsedCapabilities = TRUE;
 }
 
 static BOOL
@@ -344,38 +135,51 @@ imap_init(imap *Imap, char *HostName, int Port)
         return FALSE;
     }
 
-    Imap->ParsedCapabilities = 0;
-    Imap->HasIdle = 0;
-    Imap->HasRecent = 0;
+    Imap->ParsedCapabilities = FALSE;
+    Imap->HasIdle = FALSE;
+    Imap->HasRecent = FALSE;
     Imap->CommandNumber = 1;
 
-    imap_response Response = imap_read_greeting_response(Imap);
-    if (!Response.Success)
+    char Line[65536] = {0};
+    imap_read_line(Imap, Line, 65536, TRUE);
+    imap_parser Parser = imap_create_parser(Line, strlen(Line));
+    imap_response Response = imap_parse_response(&Parser);    
+
+    if (Parser.HasError)
     {
-        printf("Failed reading greeting\n");
+        // TODO(Oskar): Send error string back?
         return FALSE;
     }
 
-    switch (Response.Provider)
+    if (Response.Type == IMAP_RESPONSE_TYPE_STATUS)
     {
-        case IMAP_IDENTIFIED_PROVIDER_GMAIL:
+        if (Response.Status == IMAP_RESPONSE_STATUS_OK)
         {
-            Imap->HasRecent = 0;
-        } break;
-
-        case IMAP_IDENTIFIED_PROVIDER_UNKNOWN:
-        {
-
-        } break;
-    }
-
-    if (Response.ParsedCapabilities)
-    {
-        Imap->ParsedCapabilities = 1;
-        if (Response.HasIdle)
-        {
-            Response.HasIdle = 0;
+            if (Response.Code == IMAP_RESPONSE_CODE_CAPABILITY)
+            {
+                imap_read_capabilities(Imap, Response.Data, Response.DataCount);
+            }
         }
+        else 
+        {
+            // Bad response
+            return FALSE;
+        }
+    }
+    else if (Response.Type == IMAP_RESPONSE_TYPE_DATA)
+    {
+        for (int Index = 0; Index < Response.DataCount; ++Index)
+        {
+            if (strcmp(Response.Data[Index].Value, "Gimap") == 0)
+            {
+                Imap->HasRecent = FALSE;
+            }
+        }
+    }
+    else
+    {
+        // Bad Response unknown response type
+        return FALSE;
     }
 
     return TRUE;
@@ -394,17 +198,50 @@ imap_login(imap *Imap, char *Login, char *Password)
         return FALSE;
     }
 
-    imap_response Response = imap_read_login_response(Imap, CommandTag);
-    if (!Response.Success)
+    char Line[65536] = {0};
+    BOOL FoundTag = FALSE;
+    BOOL ClearBuffer = TRUE;
+    while (!FoundTag)
     {
-        printf("Failed parsing login message\n");
-        return FALSE;
-    }
+        imap_read_line(Imap, Line, 65536, ClearBuffer);
+        ClearBuffer = FALSE;
 
-    if (Response.ParsedCapabilities)
-    {
-        Imap->ParsedCapabilities = 1;
-        Imap->HasIdle = Response.HasIdle;
+        imap_parser Parser = imap_create_parser(Line, strlen(Line));
+        imap_response Response = imap_parse_response(&Parser);
+
+        if (Parser.HasError)
+        {
+            // TODO(Oskar): Send error string back?
+            return FALSE;
+        }
+
+        if (Response.Type == IMAP_RESPONSE_TYPE_STATUS)
+        {
+            if (Response.Status == IMAP_RESPONSE_STATUS_OK)
+            {
+                if (Response.Code == IMAP_RESPONSE_CODE_CAPABILITY)
+                {
+                    imap_read_capabilities(Imap, Response.Data, Response.DataCount);
+                }
+
+                if (strcmp(Response.Tag, CommandTag) == 0)
+                {
+                    FoundTag = TRUE;
+                }
+            }
+            else
+            {
+                return FALSE;
+            }
+        }
+        else if (Response.Type == IMAP_RESPONSE_TYPE_DATA)
+        {
+            char *Command = Response.Data[0].Value;
+            if (strcmp(Command, "CAPABILITY") == 0)
+            {
+                imap_read_capabilities(Imap, Response.Data, Response.DataCount);
+            }
+        }
     }
     
     return TRUE;
@@ -424,11 +261,39 @@ imap_examine(imap *Imap, char *Folder)
         return FALSE;
     }
 
-    imap_response Response = imap_read_examine_response(Imap, CommandTag);
-    if (!Response.Success)
+    char Line[65536] = {0};
+    BOOL FoundTag = FALSE;
+    BOOL ClearBuffer = TRUE;
+    while (!FoundTag)
     {
-        printf("Failed parsing examine message\n");
-        return FALSE;
+        imap_read_line(Imap, Line, 65536, ClearBuffer);
+        ClearBuffer = FALSE;
+
+        imap_parser Parser = imap_create_parser(Line, strlen(Line));
+        imap_response Response = imap_parse_response(&Parser);
+
+        if (Parser.HasError)
+        {
+            // TODO(Oskar): Send error string back?
+            return FALSE;
+        }
+
+        // NOTE(Oskar): We are doing this request just to select the
+        // mailbox. Ignore the data we get back except tagged OK.
+        if (Response.Type == IMAP_RESPONSE_TYPE_STATUS)
+        {
+            if (Response.Status == IMAP_RESPONSE_STATUS_OK)
+            {
+                if (strcmp(Response.Tag, CommandTag) == 0)
+                {
+                    FoundTag = TRUE;
+                }
+            }
+            else
+            {
+                return FALSE;
+            }
+        }
     }
 
     return TRUE;
@@ -448,20 +313,72 @@ imap_idle(imap *Imap)
         return FALSE;
     }
     
-    imap_response Response = imap_read_idle_response(Imap);
-    if (!Response.Success)
+    char Line[65536] = {0};
+    BOOL FoundTag = FALSE;
+    BOOL ClearBuffer = TRUE;
+    imap_read_line(Imap, Line, 65536, ClearBuffer);
+    
+    imap_parser Parser = imap_create_parser(Line, strlen(Line));
+    imap_response Response = imap_parse_response(&Parser);
+
+    if (Parser.HasError)
     {
-        printf("Failed parsing idle message\n");
+        // TODO(Oskar): Send error string back?
+        return FALSE;
+    }
+
+    if (Response.Type != IMAP_RESPONSE_TYPE_CONTINUATION)
+    {
         return FALSE;
     }
 
     return TRUE;
 }
 
-static imap_response
+static imap_idle_message
 imap_idle_listen(imap *Imap)
 {
-    return imap_read_idle_listen_response(Imap);
+    char Line[65536] = {0};
+    BOOL FoundTag = FALSE;
+    BOOL ClearBuffer = TRUE;
+    int LineLength = imap_read_line(Imap, Line, 65536, ClearBuffer);
+
+    if (LineLength <= 0)
+    {
+        // Error
+    }
+
+    imap_parser Parser = imap_create_parser(Line, strlen(Line));
+    imap_response Response = imap_parse_response(&Parser);
+
+    if (Parser.HasError)
+    {
+        // TODO(Oskar): Send error string back
+    }
+
+    if (Response.Type == IMAP_RESPONSE_TYPE_DATA &&
+        Response.DataCount >= 2)
+    {
+        if (strstr(Response.Data[1].Value, "EXISTS"))
+        {
+            return IMAP_IDLE_MESSAGE_EXISTS;
+        }
+        else if(strstr(Response.Data[1].Value, "EXPUNGE"))
+        {
+            return IMAP_IDLE_MESSAGE_EXPUNGE;
+        }
+        else
+        {
+            return IMAP_IDLE_MESSAGE_UNKNOWN;
+        }
+    }
+    else
+    {
+        // Error
+        return IMAP_IDLE_MESSAGE_UNKNOWN;
+    }
+
+    return IMAP_IDLE_MESSAGE_UNKNOWN;
 }
 
 static BOOL
@@ -477,19 +394,44 @@ imap_done(imap *Imap)
     char CommandTag[10];
     sprintf(CommandTag, "A%03d", LastCommandNumber);
 
-    imap_response Response = imap_read_done_response(Imap, CommandTag);
-    if (!Response.Success)
+    char Line[65536] = {0};
+    imap_read_line(Imap, Line, 65536, TRUE);
+    imap_parser Parser = imap_create_parser(Line, strlen(Line));
+    imap_response Response = imap_parse_response(&Parser);
+
+    if (Parser.HasError)
     {
-        printf("Failed parsing done message\n");
+        // TODO(Oskar): Send error string back
         return FALSE;
     }
 
-    return TRUE;
+    if (Response.Type == IMAP_RESPONSE_TYPE_STATUS)
+    {
+        if (Response.Status == IMAP_RESPONSE_STATUS_OK)
+        {
+            if (strcmp(Response.Tag, CommandTag) == 0)
+            {
+                return TRUE;
+            }
+        }
+        else
+        {
+            return FALSE;
+        }
+    }
+    else
+    {
+        return FALSE;
+    }
+
+    return FALSE;
 }
 
-static imap_response
+static imap_search_response
 imap_search(imap *Imap)
 {
+    imap_search_response Result = {0};
+
     char *Keyword = 0;
     if (Imap->HasRecent)
     {
@@ -506,18 +448,61 @@ imap_search(imap *Imap)
 
      if (!imap_command(Imap, TRUE, "%s %s %s\r\n", CommandTag, IMAP_COMMAND_SEARCH, Keyword))
     {
-        printf("Done failed, exiting!\n");
-        return FailedResponse();
+        Result.Error = TRUE;
+        return Result;
     }
 
-    imap_response Response = imap_read_search_response(Imap, CommandTag);
-    if (!Response.Success)
+    char Line[65536] = {0};
+    BOOL FoundTag = FALSE;
+    BOOL ClearBuffer = TRUE;
+    while (!FoundTag)
     {
-        printf("Failed parsing search message\n");
-        return FailedResponse();
+        imap_read_line(Imap, Line, 65536, ClearBuffer);
+        ClearBuffer = FALSE;
+
+        imap_parser Parser = imap_create_parser(Line, strlen(Line));
+        imap_response Response = imap_parse_response(&Parser);
+
+        if (Parser.HasError)
+        {
+            // TODO(Oskar): Send error string back?
+            Result.Error = TRUE;
+            return Result;
+        }
+
+        // NOTE(Oskar): We are doing this request just to select the
+        // mailbox. Ignore the data we get back except tagged OK.
+        if (Response.Type == IMAP_RESPONSE_TYPE_STATUS)
+        {
+            if (Response.Status == IMAP_RESPONSE_STATUS_OK)
+            {
+                if (strcmp(Response.Tag, CommandTag) == 0)
+                {
+                    FoundTag = TRUE;
+                }
+            }
+            else
+            {
+                Result.Error = TRUE;
+                return Result;
+            }
+        }
+        else if (Response.Type == IMAP_RESPONSE_TYPE_DATA)
+        {
+            if (strcmp(Response.Data[0].Value, "SEARCH") == 0)
+            {
+                Result.NumberOfMails = Response.DataCount - 1;
+                Result.Error = FALSE;
+            }
+            else
+            {
+                // NOTE(Oskar): Unknown response
+                Result.Error = TRUE;
+            }
+        }
     }
     
-    return Response;
+    return Result;
 }
 
 #if 0

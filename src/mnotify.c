@@ -26,6 +26,8 @@
 
 #include "tls.c"
 #include "mnotify.h"
+#include "tokenizer.c"
+#include "imap_parser.h"
 #include "imap_client.h"
 
 #define WM_MNOTIFY_ALREADY_RUNNING (WM_USER+1)
@@ -66,12 +68,9 @@ static BOOL GlobalImapIdleClientWasReset;
 
 static mnotify_config GlobalConfiguration;
 
-#include "tokenizer.c"
 #include "imap_parser.c"
 #include "imap_client.c"
 
-// 
-static imap_email_message *Email;
 static unsigned int EmailCount;
 
 static void 
@@ -137,9 +136,9 @@ Win32FatalErrorMessage(char *Message)
 }
 
 static void 
-Win32FatalErrorCode(char *Message)
+Win32FatalErrorCode(LPSTR Message)
 { 
-    char *ErrorMessage;
+    LPSTR ErrorMessage;
     DWORD LastError = GetLastError(); 
 
     FormatMessageA(
@@ -221,10 +220,7 @@ WindowProc(HWND Window, UINT Message, WPARAM WParam, LPARAM LParam)
     }
     else if (Message == WM_MNOTIFY_EMAIL_MESSAGE)
     {
-        // imap_email_message *Emails = (imap_email_message *)WParam;
         int TotalEmails = (int)LParam;
-
-        // Email = Emails;
         EmailCount = TotalEmails;
 
         if (EmailCount == 0)
@@ -243,13 +239,6 @@ WindowProc(HWND Window, UINT Message, WPARAM WParam, LPARAM LParam)
     }
     else if (Message == WM_MNOTIFY_EMAIL_CLEAR)
     {
-        // for (int Index = 0; Index < EmailCount; ++Index)
-        // {
-        //     free(Email[Index].Subject);
-        //     free(Email[Index].From);
-        //     free(Email[Index].Date);
-        // }
-        // free(Email);
         EmailCount = 0;
     }
     else if (Message == WM_MNOTIFY_COMMAND)
@@ -313,7 +302,7 @@ ImapPerformPolling(char *Host, int Port, char *Account, char *Password)
             printf("Imap connection failed.\n");
             return;
         }
-        
+
         if(!imap_login(&Imap, Account, Password))
         {
             printf("Imap Login failed.\n");
@@ -326,17 +315,26 @@ ImapPerformPolling(char *Host, int Port, char *Account, char *Password)
         }
 
         // NOTE(Oskar): We resort to polling
-        imap_response SearchResult = imap_search(&Imap);
-        if (!SearchResult.Success)
+        imap_search_response SearchResult = imap_search(&Imap);
+        if (SearchResult.Error)
         {
             return;
         }
 
         // NOTE(Oskar): Find out which emails we want to get
-        if (SearchResult.NumberOfNumbers != EmailCount)
+        if (SearchResult.NumberOfMails != EmailCount)
         {
-            PostMessageW(GlobalWindow, WM_MNOTIFY_EMAIL_CLEAR, 0, 0);
-            PostMessageW(GlobalWindow, WM_MNOTIFY_EMAIL_MESSAGE, 0, (LPARAM)SearchResult.NumberOfNumbers);
+            // NOTE(Oskar): We only trigger a notification if stored number of
+            // unread emails are lower than what exists in mailbox.
+            if (EmailCount < SearchResult.NumberOfMails)
+            {
+                PostMessageW(GlobalWindow, WM_MNOTIFY_EMAIL_CLEAR, 0, 0);
+                PostMessageW(GlobalWindow, WM_MNOTIFY_EMAIL_MESSAGE, 0, (LPARAM)SearchResult.NumberOfMails);
+            }
+            else
+            {
+                EmailCount = SearchResult.NumberOfMails;
+            }
         }
 
         Sleep(GlobalConfiguration.PollingTimeSeconds * 1000);
@@ -363,7 +361,7 @@ ImapPerformIdle(char *Host, int Port, char *Account, char *Password)
             printf("Imap connection failed.\n");
             return;
         }
-        
+
         if(!imap_login(&GlobalImapIdleClient, Account, Password))
         {
             printf("Imap Login failed.\n");
@@ -387,13 +385,7 @@ ImapPerformIdle(char *Host, int Port, char *Account, char *Password)
             imap_idle_message IdleMessage = IMAP_IDLE_MESSAGE_UNKNOWN;
             while (IdleMessage != IMAP_IDLE_MESSAGE_EXISTS)
             {
-                imap_response IdleResponse = imap_idle_listen(&GlobalImapIdleClient);
-                if (!IdleResponse.Success)
-                {
-                    goto idle_problem;
-                }
-
-                IdleMessage = IdleResponse.IdleMessageType;
+                IdleMessage = imap_idle_listen(&GlobalImapIdleClient);
                 if (IdleMessage == IMAP_IDLE_MESSAGE_EXPUNGE)
                 {
                     if (EmailCount > 0)
@@ -408,14 +400,14 @@ ImapPerformIdle(char *Host, int Port, char *Account, char *Password)
                 break;
             }
 
-            imap_response SearchResult = imap_search(&GlobalImapIdleClient);
-            if (!SearchResult.Success)
+            imap_search_response SearchResult = imap_search(&GlobalImapIdleClient);
+            if (SearchResult.Error)
             {
                 break;
             }
 
             // NOTE(Oskar): Find out which emails we want to get
-            if (SearchResult.NumberOfNumbers != EmailCount)
+            if (SearchResult.NumberOfMails != EmailCount)
             {
                 PostMessageW(GlobalWindow, WM_MNOTIFY_EMAIL_CLEAR, 0, 0);
 
@@ -428,7 +420,7 @@ ImapPerformIdle(char *Host, int Port, char *Account, char *Password)
                 //     break;
                 // }
 
-                PostMessageW(GlobalWindow, WM_MNOTIFY_EMAIL_MESSAGE, 0, (LPARAM)SearchResult.NumberOfNumbers);
+                PostMessageW(GlobalWindow, WM_MNOTIFY_EMAIL_MESSAGE, 0, (LPARAM)SearchResult.NumberOfMails);
             }
         }
 
@@ -452,7 +444,7 @@ ImapBackgroundThread(LPVOID lpParameter)
         printf("Imap connection failed.\n");
         return -1;
     }
-    
+ 
     if(!imap_login(&Imap, GlobalConfiguration.Account, GlobalConfiguration.Password))
     {
         printf("Imap Login failed.\n");
@@ -516,7 +508,6 @@ WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLine, int ShowC
         ExitProcess(0);
     }
 
-    // NOTE(Oskar): Creating background thread
     // TODO(Oskar): Later create 1 per email account?
     GlobalBackgroundThreadHandle = CreateThread(0, 0, ImapBackgroundThread, 0, 0, &GlobalBackgroundThreadId);
     EmailCount = 0;

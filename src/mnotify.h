@@ -8,3 +8,6 @@ typedef struct
     int Port;
     int PollingTimeSeconds;
 } mnotify_config;
+
+
+#define ArrayCount(Array) sizeof(Array) / sizeof(Array[0])
