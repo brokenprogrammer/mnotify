@@ -230,12 +230,12 @@ UpdateTrayIcon(HICON Icon)
 static void 
 RemoveTrayIcon(HWND Window)
 {
-	NOTIFYICONDATAW Data =
-	{
-		.cbSize = sizeof(Data),
-		.hWnd = Window,
-	};
-	Shell_NotifyIconW(NIM_DELETE, &Data);
+    NOTIFYICONDATAW Data =
+    {
+        .cbSize = sizeof(Data),
+        .hWnd = Window,
+    };
+    Shell_NotifyIconW(NIM_DELETE, &Data);
 }
 
 static void
@@ -589,13 +589,13 @@ WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLine, int ShowC
     }
 
     WM_TASKBARCREATED = RegisterWindowMessageW(L"TaskbarCreated");
-	assert(WM_TASKBARCREATED);
+    assert(WM_TASKBARCREATED);
 
     GlobalOpenIcon          = LoadIconW(WindowClass.hInstance, MAKEINTRESOURCEW(1));
-	GlobalClosedIcon        = LoadIconW(WindowClass.hInstance, MAKEINTRESOURCEW(2));
+    GlobalClosedIcon        = LoadIconW(WindowClass.hInstance, MAKEINTRESOURCEW(2));
     GlobalOpenWarningIcon   = LoadIconW(WindowClass.hInstance, MAKEINTRESOURCEW(3));
     GlobalClosedWarningIcon = LoadIconW(WindowClass.hInstance, MAKEINTRESOURCEW(4));
-	assert(GlobalOpenIcon && GlobalClosedIcon && GlobalOpenWarningIcon && GlobalClosedWarningIcon);
+    assert(GlobalOpenIcon && GlobalClosedIcon && GlobalOpenWarningIcon && GlobalClosedWarningIcon);
 
     // NOTE(Oskar): Load configuration
     GlobalConfiguration = LoadConfiguration();
