@@ -1,3 +1,5 @@
+#define IMAP_LOCAL_READ_BUFFER_SIZE 65536
+#define IMAP_DEFAULT_ERROR_BUFFER_SIZE 65536
 #define IMAP_DEFAULT_READ_BUFFER_SIZE 32768
 #define IMAP_END_OF_MESSAGE "\r\n"
 
@@ -6,6 +8,30 @@
 #define IMAP_COMMAND_IDLE "IDLE"
 #define IMAP_COMMAND_DONE "DONE"
 #define IMAP_COMMAND_SEARCH "SEARCH"
+
+typedef enum
+{
+    IMAP_CLIENT_ERROR_SUCCESS, // Ok Response
+    IMAP_CLIENT_ERROR_SOCKET_CONNECTION,
+    IMAP_CLIENT_ERROR_SOCKET_RECIEVE,
+    IMAP_CLIENT_ERROR_SOCKET_WRITE,
+    IMAP_CLIENT_ERROR_SOCKET_DISCONNECTED,
+    IMAP_CLIENT_ERROR_PARSE,
+    IMAP_CLIENT_ERROR_BAD_RESPONSE,
+
+    IMAP_CLIENT_ERROR_COUNT,
+} imap_client_error;
+
+static char *ImapClientErrorStrings[IMAP_CLIENT_ERROR_COUNT] = 
+{
+    "",
+    "Error: Failed to establish TLS connection with server.",
+    "Error: Failed to recieve data from server.",
+    "Error: Failed to write data to server.",
+    "Error: Connection lost",
+    "Error: Bad input when parsing response.",
+    "Error: Client recieved bad response.",
+};
 
 typedef enum
 {
@@ -46,12 +72,18 @@ typedef enum
     IMAP_IDLE_MESSAGE_UNKNOWN,
     IMAP_IDLE_MESSAGE_EXISTS,
     IMAP_IDLE_MESSAGE_EXPUNGE,
-} imap_idle_message;
+} imap_idle_response_type;
+
+typedef struct
+{
+    imap_idle_response_type Type;
+    imap_client_error Error;
+} imap_idle_response;
 
 typedef struct
 {
     int NumberOfMails;
-    BOOL Error;
+    imap_client_error Error;
 } imap_search_response;
 
 typedef struct
@@ -87,4 +119,7 @@ typedef struct
     BOOL HasRecent;
 
     int CommandNumber;
+
+    int ErrorLength;
+    char Error[IMAP_DEFAULT_ERROR_BUFFER_SIZE];
 } imap;

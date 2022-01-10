@@ -1,3 +1,30 @@
+static void
+imap_write_error(imap *Imap, imap_client_error ErrorType, char *Data)
+{
+    int Length = 0;
+    Length = sprintf(Imap->Error, "%s", ImapClientErrorStrings[ErrorType]);
+
+    if (Data != NULL)
+    {
+        Length += sprintf(Imap->Error + Length, ": %s\n", Data);
+    }
+    else 
+    {
+        Length += sprintf(Imap->Error + Length, "\n");
+    }
+
+    Imap->ErrorLength = Length;
+}
+
+static void
+imap_write_parser_error(imap *Imap, imap_parser *Parser)
+{
+    int Length = 0;
+    Length = sprintf(Imap->Error, "%s\n", Parser->Error);
+
+    Imap->ErrorLength = Length;
+}
+
 static BOOL
 imap_command(imap *Imap, BOOL IncrementCommandNumber, char *Format, ...)
 {
@@ -27,13 +54,13 @@ imap_command(imap *Imap, BOOL IncrementCommandNumber, char *Format, ...)
 static int
 imap_read_line(imap *Imap, char *Buffer, int BufferSize, BOOL ClearBuffer)
 {
-    static char LocalBuffer[65536];
+    static char LocalBuffer[IMAP_LOCAL_READ_BUFFER_SIZE];
     static int LocalBufferSize = 0;
 
     if (ClearBuffer)
     {
         LocalBufferSize = 0;
-        memset(LocalBuffer, 0, 65536);
+        memset(LocalBuffer, 0, IMAP_LOCAL_READ_BUFFER_SIZE);
     }
 
     char *FoundLine = NULL;
@@ -78,7 +105,7 @@ imap_read_line(imap *Imap, char *Buffer, int BufferSize, BOOL ClearBuffer)
         if (Result < 0)
         {
             printf("Error receiving data\n");
-            return -1;
+            return -2;
         }
         else if (Result == 0)
         {
@@ -112,6 +139,23 @@ imap_read_line(imap *Imap, char *Buffer, int BufferSize, BOOL ClearBuffer)
     return Received;
 }
 
+static imap_client_error
+imap_check_read_result(int ReadResult)
+{
+    if (ReadResult > 0)
+    {
+        return IMAP_CLIENT_ERROR_SUCCESS;
+    }
+    else if (ReadResult == -1)
+    {
+        return IMAP_CLIENT_ERROR_SOCKET_DISCONNECTED;
+    }
+    else
+    {
+        return IMAP_CLIENT_ERROR_SOCKET_RECIEVE;
+    }
+}
+
 static void
 imap_read_capabilities(imap *Imap, imap_response_data *Data, unsigned int DataCount)
 {
@@ -126,13 +170,13 @@ imap_read_capabilities(imap *Imap, imap_response_data *Data, unsigned int DataCo
     Imap->ParsedCapabilities = TRUE;
 }
 
-static BOOL
+static imap_client_error
 imap_init(imap *Imap, char *HostName, int Port)
 {
     if (tls_connect(&Imap->Socket, HostName, Port) != 0)
     {
-        printf("Error connecting to %s\n", HostName);
-        return FALSE;
+        imap_write_error(Imap, IMAP_CLIENT_ERROR_SOCKET_CONNECTION, NULL);
+        return IMAP_CLIENT_ERROR_SOCKET_CONNECTION;
     }
 
     Imap->ParsedCapabilities = FALSE;
@@ -140,15 +184,23 @@ imap_init(imap *Imap, char *HostName, int Port)
     Imap->HasRecent = FALSE;
     Imap->CommandNumber = 1;
 
-    char Line[65536] = {0};
-    imap_read_line(Imap, Line, 65536, TRUE);
+    char Line[IMAP_DEFAULT_READ_BUFFER_SIZE] = {0};
+    int ReadLength = imap_read_line(Imap, Line, IMAP_DEFAULT_READ_BUFFER_SIZE, TRUE);
+    imap_client_error ReadResult = imap_check_read_result(ReadLength);
+    
+    if (ReadResult != IMAP_CLIENT_ERROR_SUCCESS)
+    {
+        imap_write_error(Imap, ReadResult, NULL);
+        return ReadResult;
+    }
+
     imap_parser Parser = imap_create_parser(Line, strlen(Line));
     imap_response Response = imap_parse_response(&Parser);    
 
     if (Parser.HasError)
     {
-        // TODO(Oskar): Send error string back?
-        return FALSE;
+        imap_write_parser_error(Imap, &Parser);
+        return IMAP_CLIENT_ERROR_PARSE;
     }
 
     if (Response.Type == IMAP_RESPONSE_TYPE_STATUS)
@@ -162,8 +214,8 @@ imap_init(imap *Imap, char *HostName, int Port)
         }
         else 
         {
-            // Bad response
-            return FALSE;
+            imap_write_error(Imap, IMAP_CLIENT_ERROR_BAD_RESPONSE, Line);
+            return IMAP_CLIENT_ERROR_BAD_RESPONSE;
         }
     }
     else if (Response.Type == IMAP_RESPONSE_TYPE_DATA)
@@ -178,14 +230,14 @@ imap_init(imap *Imap, char *HostName, int Port)
     }
     else
     {
-        // Bad Response unknown response type
-        return FALSE;
+        imap_write_error(Imap, IMAP_CLIENT_ERROR_BAD_RESPONSE, Line);
+        return IMAP_CLIENT_ERROR_BAD_RESPONSE;
     }
 
-    return TRUE;
+    return IMAP_CLIENT_ERROR_SUCCESS;
 }
 
-static BOOL
+static imap_client_error
 imap_login(imap *Imap, char *Login, char *Password)
 {
     int CommandNumber = Imap->CommandNumber;
@@ -194,25 +246,32 @@ imap_login(imap *Imap, char *Login, char *Password)
 
     if (!imap_command(Imap, TRUE, "%s %s %s %s\r\n", CommandTag, IMAP_COMMAND_LOGIN, Login, Password))
     {
-        printf("Login failed, exiting!\n");
-        return FALSE;
+        imap_write_error(Imap, IMAP_CLIENT_ERROR_SOCKET_WRITE, NULL);
+        return IMAP_CLIENT_ERROR_SOCKET_WRITE;
     }
 
-    char Line[65536] = {0};
+    char Line[IMAP_DEFAULT_READ_BUFFER_SIZE] = {0};
     BOOL FoundTag = FALSE;
     BOOL ClearBuffer = TRUE;
     while (!FoundTag)
     {
-        imap_read_line(Imap, Line, 65536, ClearBuffer);
+        int ReadLength = imap_read_line(Imap, Line, IMAP_DEFAULT_READ_BUFFER_SIZE, ClearBuffer);
         ClearBuffer = FALSE;
+
+        imap_client_error ReadResult = imap_check_read_result(ReadLength);
+        if (ReadResult != IMAP_CLIENT_ERROR_SUCCESS)
+        {
+            imap_write_error(Imap, ReadResult, NULL);
+            return ReadResult;
+        }
 
         imap_parser Parser = imap_create_parser(Line, strlen(Line));
         imap_response Response = imap_parse_response(&Parser);
 
         if (Parser.HasError)
         {
-            // TODO(Oskar): Send error string back?
-            return FALSE;
+            imap_write_parser_error(Imap, &Parser);
+            return IMAP_CLIENT_ERROR_PARSE;
         }
 
         if (Response.Type == IMAP_RESPONSE_TYPE_STATUS)
@@ -231,7 +290,8 @@ imap_login(imap *Imap, char *Login, char *Password)
             }
             else
             {
-                return FALSE;
+                imap_write_error(Imap, IMAP_CLIENT_ERROR_BAD_RESPONSE, Line);
+                return IMAP_CLIENT_ERROR_BAD_RESPONSE;
             }
         }
         else if (Response.Type == IMAP_RESPONSE_TYPE_DATA)
@@ -244,10 +304,10 @@ imap_login(imap *Imap, char *Login, char *Password)
         }
     }
     
-    return TRUE;
+    return IMAP_CLIENT_ERROR_SUCCESS;
 }
 
-static BOOL
+static imap_client_error
 imap_examine(imap *Imap, char *Folder)
 {
     int CommandNumber = Imap->CommandNumber;
@@ -257,25 +317,32 @@ imap_examine(imap *Imap, char *Folder)
 
     if (!imap_command(Imap, TRUE, "%s %s %s\r\n", CommandTag, IMAP_COMMAND_EXAMINE, Folder))
     {
-        printf("Examine failed, exiting!\n");
-        return FALSE;
+        imap_write_error(Imap, IMAP_CLIENT_ERROR_SOCKET_WRITE, NULL);
+        return IMAP_CLIENT_ERROR_SOCKET_WRITE;
     }
 
-    char Line[65536] = {0};
+    char Line[IMAP_DEFAULT_READ_BUFFER_SIZE] = {0};
     BOOL FoundTag = FALSE;
     BOOL ClearBuffer = TRUE;
     while (!FoundTag)
     {
-        imap_read_line(Imap, Line, 65536, ClearBuffer);
+        int ReadLength = imap_read_line(Imap, Line, IMAP_DEFAULT_READ_BUFFER_SIZE, ClearBuffer);
         ClearBuffer = FALSE;
+
+        imap_client_error ReadResult = imap_check_read_result(ReadLength);
+        if (ReadResult != IMAP_CLIENT_ERROR_SUCCESS)
+        {
+            imap_write_error(Imap, ReadResult, NULL);
+            return ReadResult;
+        }
 
         imap_parser Parser = imap_create_parser(Line, strlen(Line));
         imap_response Response = imap_parse_response(&Parser);
 
         if (Parser.HasError)
         {
-            // TODO(Oskar): Send error string back?
-            return FALSE;
+            imap_write_parser_error(Imap, &Parser);
+            return IMAP_CLIENT_ERROR_PARSE;
         }
 
         // NOTE(Oskar): We are doing this request just to select the
@@ -291,61 +358,75 @@ imap_examine(imap *Imap, char *Folder)
             }
             else
             {
-                return FALSE;
+                imap_write_error(Imap, IMAP_CLIENT_ERROR_BAD_RESPONSE, Line);
+                return IMAP_CLIENT_ERROR_BAD_RESPONSE;
             }
         }
     }
 
-    return TRUE;
+    return IMAP_CLIENT_ERROR_SUCCESS;
 }
 
-static BOOL
+static imap_client_error
 imap_idle(imap *Imap)
 {
-    // TODO(Oskar): Assert that Imap connection supports idle?
     int CommandNumber = Imap->CommandNumber;
     char CommandTag[10];
     sprintf(CommandTag, "A%03d", CommandNumber);
 
     if (!imap_command(Imap, TRUE, "%s %s\r\n", CommandTag, IMAP_COMMAND_IDLE))
     {
-        printf("Idle failed, exiting!\n");
-        return FALSE;
+        imap_write_error(Imap, IMAP_CLIENT_ERROR_SOCKET_WRITE, NULL);
+        return IMAP_CLIENT_ERROR_SOCKET_WRITE;
     }
     
-    char Line[65536] = {0};
+    char Line[IMAP_DEFAULT_READ_BUFFER_SIZE] = {0};
     BOOL FoundTag = FALSE;
     BOOL ClearBuffer = TRUE;
-    imap_read_line(Imap, Line, 65536, ClearBuffer);
+    int ReadLength = imap_read_line(Imap, Line, IMAP_DEFAULT_READ_BUFFER_SIZE, ClearBuffer);
     
+    imap_client_error ReadResult = imap_check_read_result(ReadLength);
+    if (ReadResult != IMAP_CLIENT_ERROR_SUCCESS)
+    {
+        imap_write_error(Imap, ReadResult, NULL);
+        return ReadResult;
+    }
+
     imap_parser Parser = imap_create_parser(Line, strlen(Line));
     imap_response Response = imap_parse_response(&Parser);
 
     if (Parser.HasError)
     {
-        // TODO(Oskar): Send error string back?
-        return FALSE;
+        imap_write_parser_error(Imap, &Parser);
+        return IMAP_CLIENT_ERROR_PARSE;
     }
 
     if (Response.Type != IMAP_RESPONSE_TYPE_CONTINUATION)
     {
-        return FALSE;
+        imap_write_error(Imap, IMAP_CLIENT_ERROR_BAD_RESPONSE, Line);
+        return IMAP_CLIENT_ERROR_BAD_RESPONSE;
     }
 
-    return TRUE;
+    return IMAP_CLIENT_ERROR_SUCCESS;
 }
 
-static imap_idle_message
+static imap_idle_response
 imap_idle_listen(imap *Imap)
 {
-    char Line[65536] = {0};
+    imap_idle_response Result = {0};
+    Result.Error = IMAP_CLIENT_ERROR_SUCCESS;
+
+    char Line[IMAP_DEFAULT_READ_BUFFER_SIZE] = {0};
     BOOL FoundTag = FALSE;
     BOOL ClearBuffer = TRUE;
-    int LineLength = imap_read_line(Imap, Line, 65536, ClearBuffer);
+    int ReadLength = imap_read_line(Imap, Line, IMAP_DEFAULT_READ_BUFFER_SIZE, ClearBuffer);
 
-    if (LineLength <= 0)
+    imap_client_error ReadResult = imap_check_read_result(ReadLength);
+    if (ReadResult != IMAP_CLIENT_ERROR_SUCCESS)
     {
-        // Error
+        imap_write_error(Imap, ReadResult, NULL);
+        Result.Error = ReadResult;
+        return Result;
     }
 
     imap_parser Parser = imap_create_parser(Line, strlen(Line));
@@ -353,7 +434,9 @@ imap_idle_listen(imap *Imap)
 
     if (Parser.HasError)
     {
-        // TODO(Oskar): Send error string back
+        imap_write_parser_error(Imap, &Parser);
+        Result.Error = IMAP_CLIENT_ERROR_PARSE;
+        return Result;
     }
 
     if (Response.Type == IMAP_RESPONSE_TYPE_DATA &&
@@ -361,48 +444,55 @@ imap_idle_listen(imap *Imap)
     {
         if (strstr(Response.Data[1].Value, "EXISTS"))
         {
-            return IMAP_IDLE_MESSAGE_EXISTS;
+            Result.Type = IMAP_IDLE_MESSAGE_EXISTS;
         }
         else if(strstr(Response.Data[1].Value, "EXPUNGE"))
         {
-            return IMAP_IDLE_MESSAGE_EXPUNGE;
+            Result.Type = IMAP_IDLE_MESSAGE_EXPUNGE;
         }
         else
         {
-            return IMAP_IDLE_MESSAGE_UNKNOWN;
+            Result.Type = IMAP_IDLE_MESSAGE_UNKNOWN;
         }
     }
     else
     {
-        // Error
-        return IMAP_IDLE_MESSAGE_UNKNOWN;
+        Result.Type = IMAP_IDLE_MESSAGE_UNKNOWN;
     }
 
-    return IMAP_IDLE_MESSAGE_UNKNOWN;
+    return Result;
 }
 
-static BOOL
+static imap_client_error
 imap_done(imap *Imap)
 {
     if (!imap_command(Imap, FALSE, "%s\r\n", IMAP_COMMAND_DONE))
     {
-        printf("Done failed, exiting!\n");
-        return FALSE;
+        imap_write_error(Imap, IMAP_CLIENT_ERROR_SOCKET_WRITE, NULL);
+        return IMAP_CLIENT_ERROR_SOCKET_WRITE;
     }
 
     int LastCommandNumber = Imap->CommandNumber - 1;
     char CommandTag[10];
     sprintf(CommandTag, "A%03d", LastCommandNumber);
 
-    char Line[65536] = {0};
-    imap_read_line(Imap, Line, 65536, TRUE);
+    char Line[IMAP_DEFAULT_READ_BUFFER_SIZE] = {0};
+    int ReadLength = imap_read_line(Imap, Line, IMAP_DEFAULT_READ_BUFFER_SIZE, TRUE);
+    
+    imap_client_error ReadResult = imap_check_read_result(ReadLength);
+    if (ReadResult != IMAP_CLIENT_ERROR_SUCCESS)
+    {
+        imap_write_error(Imap, ReadResult, NULL);
+        return ReadResult;
+    }
+
     imap_parser Parser = imap_create_parser(Line, strlen(Line));
     imap_response Response = imap_parse_response(&Parser);
 
     if (Parser.HasError)
     {
-        // TODO(Oskar): Send error string back
-        return FALSE;
+        imap_write_parser_error(Imap, &Parser);
+        return IMAP_CLIENT_ERROR_PARSE;
     }
 
     if (Response.Type == IMAP_RESPONSE_TYPE_STATUS)
@@ -411,26 +501,30 @@ imap_done(imap *Imap)
         {
             if (strcmp(Response.Tag, CommandTag) == 0)
             {
-                return TRUE;
+                return IMAP_CLIENT_ERROR_SUCCESS;
             }
         }
         else
         {
-            return FALSE;
+            imap_write_error(Imap, IMAP_CLIENT_ERROR_BAD_RESPONSE, Line);
+            return IMAP_CLIENT_ERROR_BAD_RESPONSE;
         }
     }
     else
     {
-        return FALSE;
+        imap_write_error(Imap, IMAP_CLIENT_ERROR_BAD_RESPONSE, Line);
+        return IMAP_CLIENT_ERROR_BAD_RESPONSE;
     }
 
-    return FALSE;
+    imap_write_error(Imap, IMAP_CLIENT_ERROR_BAD_RESPONSE, Line);
+    return IMAP_CLIENT_ERROR_BAD_RESPONSE;
 }
 
 static imap_search_response
 imap_search(imap *Imap)
 {
     imap_search_response Result = {0};
+    Result.Error = IMAP_CLIENT_ERROR_SUCCESS;
 
     char *Keyword = 0;
     if (Imap->HasRecent)
@@ -448,25 +542,33 @@ imap_search(imap *Imap)
 
      if (!imap_command(Imap, TRUE, "%s %s %s\r\n", CommandTag, IMAP_COMMAND_SEARCH, Keyword))
     {
-        Result.Error = TRUE;
+        imap_write_error(Imap, IMAP_CLIENT_ERROR_SOCKET_WRITE, NULL);
         return Result;
     }
 
-    char Line[65536] = {0};
+    char Line[IMAP_DEFAULT_READ_BUFFER_SIZE] = {0};
     BOOL FoundTag = FALSE;
     BOOL ClearBuffer = TRUE;
     while (!FoundTag)
     {
-        imap_read_line(Imap, Line, 65536, ClearBuffer);
+        int ReadLength = imap_read_line(Imap, Line, IMAP_DEFAULT_READ_BUFFER_SIZE, ClearBuffer);
         ClearBuffer = FALSE;
+
+        imap_client_error ReadResult = imap_check_read_result(ReadLength);
+        if (ReadResult != IMAP_CLIENT_ERROR_SUCCESS)
+        {
+            imap_write_error(Imap, ReadResult, NULL);
+            Result.Error = ReadResult;
+            return Result;
+        }
 
         imap_parser Parser = imap_create_parser(Line, strlen(Line));
         imap_response Response = imap_parse_response(&Parser);
 
         if (Parser.HasError)
         {
-            // TODO(Oskar): Send error string back?
-            Result.Error = TRUE;
+            imap_write_parser_error(Imap, &Parser);
+            Result.Error = IMAP_CLIENT_ERROR_PARSE;
             return Result;
         }
 
@@ -483,7 +585,8 @@ imap_search(imap *Imap)
             }
             else
             {
-                Result.Error = TRUE;
+                imap_write_error(Imap, IMAP_CLIENT_ERROR_BAD_RESPONSE, Line);
+                Result.Error = IMAP_CLIENT_ERROR_BAD_RESPONSE;
                 return Result;
             }
         }
@@ -492,12 +595,13 @@ imap_search(imap *Imap)
             if (strcmp(Response.Data[0].Value, "SEARCH") == 0)
             {
                 Result.NumberOfMails = Response.DataCount - 1;
-                Result.Error = FALSE;
+                Result.Error = IMAP_CLIENT_ERROR_SUCCESS;
             }
             else
             {
-                // NOTE(Oskar): Unknown response
-                Result.Error = TRUE;
+                imap_write_error(Imap, IMAP_CLIENT_ERROR_BAD_RESPONSE, Line);
+                Result.Error = IMAP_CLIENT_ERROR_BAD_RESPONSE;
+                return Result;
             }
         }
     }
@@ -529,7 +633,7 @@ imap_fetch(imap *Imap, int *SequenceNumbers, int NumberOfNumbers)
     }    
 
     int CommandNumber = Imap->CommandNumber;
-    char CommandBuffer[65536];
+    char CommandBuffer[IMAP_DEFAULT_READ_BUFFER_SIZE];
     int CommandLength = sprintf(CommandBuffer, "A%03d FETCH %s (internaldate flags body[header.fields (date from subject)])\r\n", CommandNumber, Query);
     if(_imap_command(Imap, CommandBuffer, CommandLength, 1) != 0)
     {

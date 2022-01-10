@@ -1,2 +1,4 @@
-1 ICON  "mnotify1.ico"
-2 ICON  "mnotify2.ico"
+1 ICON  "mnotify_open.ico"
+2 ICON  "mnotify_closed.ico"
+3 ICON  "mnotify_open_warning.ico"
+4 ICON  "mnotify_closed_warning.ico"

@@ -34,16 +34,17 @@
 #define WM_MNOTIFY_EMAIL_MESSAGE   (WM_USER+2)
 #define WM_MNOTIFY_EMAIL_CLEAR     (WM_USER+3)
 #define WM_MNOTIFY_COMMAND         (WM_USER+4)
+#define WM_MNOTIFY_ERROR           (WM_USER+5)
 
 #define CMD_MNOTIFY  1
 #define CMD_QUIT     2
-#define CMD_SETTINGS 3
-#define CMD_LIST     4
+#define CMD_LOG      3
 
-#define MNOTIFY_WINDOW_CLASS_NAME L"mnotify_window_class"
-#define MNOTIFY_WINDOW_TITLE L"MNotify"
-#define MNOTIFY_CONFIG_FILE "./mnotify.ini"
-#define MNOTIFY_CONFIG_FILEW L"./mnotify.ini"
+#define MNOTIFY_WINDOW_CLASS_NAME   L"mnotify_window_class"
+#define MNOTIFY_WINDOW_TITLE        L"MNotify"
+#define MNOTIFY_CONFIG_FILE         "./mnotify.ini"
+#define MNOTIFY_CONFIG_FILEW        L"./mnotify.ini"
+#define MNOTIFY_LOG_FILE            "log.txt"
 
 #define RESTART_IMAP_IDLE_TIMER_ID 1
 
@@ -51,10 +52,12 @@
 
 #define HR(hr) do { HRESULT _hr = (hr); assert(SUCCEEDED(_hr)); } while (0)
 
-// Global
+// Globals
 static UINT WM_TASKBARCREATED;
-static HICON gIcon1;
-static HICON gIcon2;
+static HICON GlobalOpenIcon;
+static HICON GlobalClosedIcon;
+static HICON GlobalOpenWarningIcon;
+static HICON GlobalClosedWarningIcon;
 
 static HWND GlobalWindow;
 static DWORD GlobalBackgroundThreadId;
@@ -67,66 +70,12 @@ static imap GlobalImapIdleClient;
 static BOOL GlobalImapIdleClientWasReset;
 
 static mnotify_config GlobalConfiguration;
+static BOOL GlobalHasErrors;
 
 #include "imap_parser.c"
 #include "imap_client.c"
 
 static unsigned int EmailCount;
-
-static void 
-ShowNotification(LPCWSTR Message, LPCWSTR Title, DWORD Flags)
-{
-    NOTIFYICONDATAW Data =
-    {
-        .cbSize = sizeof(Data),
-        .hWnd = GlobalWindow,
-        .uFlags = NIF_INFO | NIF_TIP,
-        .dwInfoFlags = Flags, // NIIF_INFO, NIIF_WARNING, NIIF_ERROR
-    };
-    StrCpyNW(Data.szTip, MNOTIFY_WINDOW_TITLE, _countof(Data.szTip));
-    StrCpyNW(Data.szInfo, Message, _countof(Data.szInfo));
-    StrCpyNW(Data.szInfoTitle, Title ? Title : MNOTIFY_WINDOW_TITLE, _countof(Data.szInfoTitle));
-    Shell_NotifyIconW(NIM_MODIFY, &Data);
-}
-
-static void 
-AddTrayIcon(HWND Window)
-{
-    NOTIFYICONDATAW Data =
-    {
-        .cbSize = sizeof(Data),
-        .hWnd = Window,
-        .uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP,
-        .uCallbackMessage = WM_MNOTIFY_COMMAND,
-        .hIcon = gIcon1,
-    };
-    StrCpyNW(Data.szTip, MNOTIFY_WINDOW_TITLE, _countof(Data.szTip));
-    Shell_NotifyIconW(NIM_ADD, &Data);
-}
-
-static void 
-UpdateTrayIcon(HICON Icon)
-{
-    NOTIFYICONDATAW Data =
-    {
-        .cbSize = sizeof(Data),
-        .hWnd = GlobalWindow,
-        .uFlags = NIF_ICON,
-        .hIcon = Icon,
-    };
-    Shell_NotifyIconW(NIM_MODIFY, &Data);
-}
-
-static void 
-RemoveTrayIcon(HWND Window)
-{
-	NOTIFYICONDATAW Data =
-	{
-		.cbSize = sizeof(Data),
-		.hWnd = Window,
-	};
-	Shell_NotifyIconW(NIM_DELETE, &Data);
-}
 
 static void 
 Win32FatalErrorMessage(char *Message) 
@@ -161,6 +110,132 @@ Win32FatalErrorCode(LPSTR Message)
     LocalFree(ErrorMessage);
     HeapFree(GetProcessHeap(), 0, MessageBuffer);
     ExitProcess(LastError); 
+}
+
+
+static BOOL
+FileExists(char *FilePath)
+{
+    return GetFileAttributesA(FilePath) != INVALID_FILE_ATTRIBUTES;
+}
+
+static void
+CreateNewFile(char *FilePath)
+{
+    HANDLE File = {0};
+
+    SECURITY_ATTRIBUTES SecurityAttributes = 
+    {
+        .nLength = (DWORD)sizeof(SECURITY_ATTRIBUTES),
+        .lpSecurityDescriptor = 0,
+        .bInheritHandle = 0,
+    };
+
+    if ((File = CreateFile(FilePath, 
+                           GENERIC_READ | GENERIC_WRITE,
+                           0,
+                           &SecurityAttributes,
+                           CREATE_ALWAYS,
+                           0,
+                           0)) != INVALID_HANDLE_VALUE)
+    {
+        CloseHandle(File);
+    }
+    else
+    {
+        Win32FatalErrorCode("Failed to create logfile.");
+    }
+}
+
+static void
+AppendToFile(char *FilePath, void *Data, unsigned int DataLength)
+{
+    HANDLE File = {0};
+    
+    SECURITY_ATTRIBUTES SecurityAttributes = 
+    {
+        .nLength = (DWORD)sizeof(SECURITY_ATTRIBUTES),
+        .lpSecurityDescriptor = 0,
+        .bInheritHandle = 0,
+    };
+
+    if ((File = CreateFile(FilePath, 
+                           FILE_APPEND_DATA, 
+                           0,
+                           &SecurityAttributes, 
+                           OPEN_ALWAYS,
+                           0, 
+                           0))
+            != INVALID_HANDLE_VALUE)
+    {
+        void *WriteData = Data;
+
+        SetFilePointer(File, 0, 0, FILE_END);
+
+        DWORD NumberOfBytesWritten = 0;
+        WriteFile(File, WriteData, (DWORD)DataLength, &NumberOfBytesWritten, 0);
+        
+        CloseHandle(File);
+    }
+    else
+    {
+        Win32FatalErrorCode("Failed to write to logfile.");
+    }
+}
+
+static void 
+ShowNotification(LPCWSTR Message, LPCWSTR Title, DWORD Flags)
+{
+    NOTIFYICONDATAW Data =
+    {
+        .cbSize = sizeof(Data),
+        .hWnd = GlobalWindow,
+        .uFlags = NIF_INFO | NIF_TIP,
+        .dwInfoFlags = Flags, // NIIF_INFO, NIIF_WARNING, NIIF_ERROR
+    };
+    StrCpyNW(Data.szTip, MNOTIFY_WINDOW_TITLE, _countof(Data.szTip));
+    StrCpyNW(Data.szInfo, Message, _countof(Data.szInfo));
+    StrCpyNW(Data.szInfoTitle, Title ? Title : MNOTIFY_WINDOW_TITLE, _countof(Data.szInfoTitle));
+    Shell_NotifyIconW(NIM_MODIFY, &Data);
+}
+
+static void 
+AddTrayIcon(HWND Window)
+{
+    NOTIFYICONDATAW Data =
+    {
+        .cbSize = sizeof(Data),
+        .hWnd = Window,
+        .uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP,
+        .uCallbackMessage = WM_MNOTIFY_COMMAND,
+        .hIcon = GlobalOpenIcon,
+    };
+    StrCpyNW(Data.szTip, MNOTIFY_WINDOW_TITLE, _countof(Data.szTip));
+    Shell_NotifyIconW(NIM_ADD, &Data);
+}
+
+static void 
+UpdateTrayIcon(HICON Icon)
+{
+    NOTIFYICONDATAW Data =
+    {
+        .cbSize = sizeof(Data),
+        .hWnd = GlobalWindow,
+        .uFlags = NIF_ICON,
+        .hIcon = Icon,
+    };
+    Shell_NotifyIconW(NIM_MODIFY, &Data);
+}
+
+static void 
+RemoveTrayIcon(HWND Window)
+{
+	NOTIFYICONDATAW Data =
+	{
+		.cbSize = sizeof(Data),
+		.hWnd = Window,
+	};
+	Shell_NotifyIconW(NIM_DELETE, &Data);
 }
 
 static void
@@ -225,11 +300,11 @@ WindowProc(HWND Window, UINT Message, WPARAM WParam, LPARAM LParam)
 
         if (EmailCount == 0)
         {
-            UpdateTrayIcon(gIcon1);
+            GlobalHasErrors ? UpdateTrayIcon(GlobalOpenWarningIcon) : UpdateTrayIcon(GlobalOpenIcon);
         }
         else
         {
-            UpdateTrayIcon(gIcon2);
+            GlobalHasErrors ? UpdateTrayIcon(GlobalClosedWarningIcon) : UpdateTrayIcon(GlobalClosedIcon);
             wchar_t Data[512];
             swprintf(Data, 512, L"You have %d unread mail.", EmailCount);
             ShowNotification(Data, L"You've got new mails!", NIIF_INFO);
@@ -252,8 +327,10 @@ WindowProc(HWND Window, UINT Message, WPARAM WParam, LPARAM LParam)
             AppendMenuW(Menu, MF_SEPARATOR, 0, NULL);
 
             // TODO(Oskar): Future features?
-            // AppendMenuW(Menu, MF_STRING, CMD_LIST, L"Show");
-            // AppendMenuW(Menu, MF_STRING, CMD_SETTINGS, L"Settings");
+            if (GlobalHasErrors)
+            {
+                AppendMenuW(Menu, MF_STRING, CMD_LOG, L"Show Log");
+            }
             
             AppendMenuW(Menu, MF_STRING, CMD_QUIT, L"Exit");
 
@@ -270,19 +347,34 @@ WindowProc(HWND Window, UINT Message, WPARAM WParam, LPARAM LParam)
             {
                 DestroyWindow(Window);
             }
-            else if (Command == CMD_SETTINGS)
+            else if (Command == CMD_LOG)
             {
-                // TODO(Oskar): Show settings where u can setup ur email accounts etc..
-            }
-            else if (Command == CMD_LIST)
-            {
-                // TODO(Oskar): Show list dialog.
+                ShellExecute(NULL, "open", MNOTIFY_LOG_FILE, NULL, NULL, SW_SHOWNORMAL);
             }
 
             DestroyMenu(Menu);
         }
         else if (LOWORD(LParam) == WM_LBUTTONDBLCLK)
         {
+        }
+
+        return 0;
+    }
+    else if (Message == WM_MNOTIFY_ERROR)
+    {
+        GlobalHasErrors = TRUE;
+
+        char *Error = (char *)WParam;
+        int ErrorLength = (int)LParam;
+        AppendToFile(MNOTIFY_LOG_FILE, Error, ErrorLength);
+
+        if (EmailCount == 0)
+        {
+            UpdateTrayIcon(GlobalOpenWarningIcon);
+        }
+        else 
+        {
+            UpdateTrayIcon(GlobalClosedWarningIcon);
         }
 
         return 0;
@@ -297,28 +389,30 @@ ImapPerformPolling(char *Host, int Port, char *Account, char *Password)
     for (;;)
     {
         imap Imap;
-        if (!imap_init(&Imap, Host, Port))
+        if (imap_init(&Imap, Host, Port) != IMAP_CLIENT_ERROR_SUCCESS)
         {
-            printf("Imap connection failed.\n");
+            SendMessage(GlobalWindow, WM_MNOTIFY_ERROR, (WPARAM)Imap.Error, (LPARAM)Imap.ErrorLength);
             return;
         }
 
-        if(!imap_login(&Imap, Account, Password))
+        if(imap_login(&Imap, Account, Password) != IMAP_CLIENT_ERROR_SUCCESS)
         {
-            printf("Imap Login failed.\n");
+            SendMessage(GlobalWindow, WM_MNOTIFY_ERROR, (WPARAM)Imap.Error, (LPARAM)Imap.ErrorLength);
             return;
         }
 
-        if(!imap_examine(&Imap, GlobalConfiguration.Folder))
+        if(imap_examine(&Imap, GlobalConfiguration.Folder) != IMAP_CLIENT_ERROR_SUCCESS)
         {
-            return;
+            SendMessage(GlobalWindow, WM_MNOTIFY_ERROR, (WPARAM)Imap.Error, (LPARAM)Imap.ErrorLength);
+            goto polling_sleep;
         }
 
         // NOTE(Oskar): We resort to polling
         imap_search_response SearchResult = imap_search(&Imap);
-        if (SearchResult.Error)
+        if (SearchResult.Error != IMAP_CLIENT_ERROR_SUCCESS)
         {
-            return;
+            SendMessage(GlobalWindow, WM_MNOTIFY_ERROR, (WPARAM)Imap.Error, (LPARAM)Imap.ErrorLength);
+            goto polling_sleep;
         }
 
         // NOTE(Oskar): Find out which emails we want to get
@@ -337,6 +431,7 @@ ImapPerformPolling(char *Host, int Port, char *Account, char *Password)
             }
         }
 
+polling_sleep: ;
         Sleep(GlobalConfiguration.PollingTimeSeconds * 1000);
     }
 } 
@@ -356,20 +451,21 @@ ImapPerformIdle(char *Host, int Port, char *Account, char *Password)
     {     
         GlobalImapIdleClientWasReset = FALSE;
         
-        if (!imap_init(&GlobalImapIdleClient, Host, Port))
+        if (imap_init(&GlobalImapIdleClient, Host, Port) != IMAP_CLIENT_ERROR_SUCCESS)
         {
-            printf("Imap connection failed.\n");
+            SendMessage(GlobalWindow, WM_MNOTIFY_ERROR, (WPARAM)GlobalImapIdleClient.Error, (LPARAM)GlobalImapIdleClient.ErrorLength);
             return;
         }
 
-        if(!imap_login(&GlobalImapIdleClient, Account, Password))
+        if(imap_login(&GlobalImapIdleClient, Account, Password) != IMAP_CLIENT_ERROR_SUCCESS)
         {
-            printf("Imap Login failed.\n");
+            SendMessage(GlobalWindow, WM_MNOTIFY_ERROR, (WPARAM)GlobalImapIdleClient.Error, (LPARAM)GlobalImapIdleClient.ErrorLength);
             return;
         }
 
-        if(!imap_examine(&GlobalImapIdleClient, GlobalConfiguration.Folder))
+        if(imap_examine(&GlobalImapIdleClient, GlobalConfiguration.Folder) != IMAP_CLIENT_ERROR_SUCCESS)
         {
+            SendMessage(GlobalWindow, WM_MNOTIFY_ERROR, (WPARAM)GlobalImapIdleClient.Error, (LPARAM)GlobalImapIdleClient.ErrorLength);
             return;
         }
 
@@ -377,16 +473,24 @@ ImapPerformIdle(char *Host, int Port, char *Account, char *Password)
         {
             KillTimer(GlobalWindow, RESTART_IMAP_IDLE_TIMER_ID);
             SetTimer(GlobalWindow, RESTART_IMAP_IDLE_TIMER_ID, RESTART_IMAP_IDLE_INTERVAL, ImapPerformIdleTimerCallback);
-            if(!imap_idle(&GlobalImapIdleClient))
+            
+            if(imap_idle(&GlobalImapIdleClient) != IMAP_CLIENT_ERROR_SUCCESS)
             {
                 break;
             }
 
-            imap_idle_message IdleMessage = IMAP_IDLE_MESSAGE_UNKNOWN;
-            while (IdleMessage != IMAP_IDLE_MESSAGE_EXISTS)
+            imap_idle_response_type IdleResponseType = IMAP_IDLE_MESSAGE_UNKNOWN;
+            while (IdleResponseType != IMAP_IDLE_MESSAGE_EXISTS)
             {
-                IdleMessage = imap_idle_listen(&GlobalImapIdleClient);
-                if (IdleMessage == IMAP_IDLE_MESSAGE_EXPUNGE)
+                imap_idle_response IdleResponse = imap_idle_listen(&GlobalImapIdleClient);
+                
+                if (IdleResponse.Error != IMAP_CLIENT_ERROR_SUCCESS)
+                {
+                    break;
+                }
+                
+                IdleResponseType = IdleResponse.Type;
+                if (IdleResponseType == IMAP_IDLE_MESSAGE_EXPUNGE)
                 {
                     if (EmailCount > 0)
                     {
@@ -395,13 +499,13 @@ ImapPerformIdle(char *Host, int Port, char *Account, char *Password)
                 }
             }
 
-            if (!imap_done(&GlobalImapIdleClient))
+            if (imap_done(&GlobalImapIdleClient) != IMAP_CLIENT_ERROR_SUCCESS)
             {
                 break;
             }
 
             imap_search_response SearchResult = imap_search(&GlobalImapIdleClient);
-            if (SearchResult.Error)
+            if (SearchResult.Error != IMAP_CLIENT_ERROR_SUCCESS)
             {
                 break;
             }
@@ -424,13 +528,11 @@ ImapPerformIdle(char *Host, int Port, char *Account, char *Password)
             }
         }
 
-idle_problem: ;
-
         // NOTE(Oskar): Check if it was us who reset the connection
         if (!GlobalImapIdleClientWasReset)
         {
+            SendMessage(GlobalWindow, WM_MNOTIFY_ERROR, (WPARAM)GlobalImapIdleClient.Error, (LPARAM)GlobalImapIdleClient.ErrorLength);
             imap_destroy(&GlobalImapIdleClient);
-            return;
         }
     }
 }
@@ -438,19 +540,20 @@ idle_problem: ;
 DWORD WINAPI
 ImapBackgroundThread(LPVOID lpParameter)
 {
+    // TODO(Oskar): How do we recover from init and login errors? Do we add
+    // option for user to restart the thread?
     imap Imap;
-    if (!imap_init(&Imap, GlobalConfiguration.Host, GlobalConfiguration.Port))
+    if (imap_init(&Imap, GlobalConfiguration.Host, GlobalConfiguration.Port) != IMAP_CLIENT_ERROR_SUCCESS)
     {
-        printf("Imap connection failed.\n");
+        SendMessage(GlobalWindow, WM_MNOTIFY_ERROR, (WPARAM)Imap.Error, (LPARAM)Imap.ErrorLength);
         return -1;
     }
  
-    if(!imap_login(&Imap, GlobalConfiguration.Account, GlobalConfiguration.Password))
+    if(imap_login(&Imap, GlobalConfiguration.Account, GlobalConfiguration.Password) != IMAP_CLIENT_ERROR_SUCCESS)
     {
-        printf("Imap Login failed.\n");
+        SendMessage(GlobalWindow, WM_MNOTIFY_ERROR, (WPARAM)Imap.Error, (LPARAM)Imap.ErrorLength);
         return -1;
     }
-
     imap_destroy(&Imap);
 
     if (Imap.HasIdle)
@@ -463,7 +566,7 @@ ImapBackgroundThread(LPVOID lpParameter)
         ImapPerformPolling(GlobalConfiguration.Host, GlobalConfiguration.Port, GlobalConfiguration.Account, GlobalConfiguration.Password); 
     }
 
-    return 0;
+    return -1;
 }
 
 int CALLBACK
@@ -488,12 +591,23 @@ WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLine, int ShowC
     WM_TASKBARCREATED = RegisterWindowMessageW(L"TaskbarCreated");
 	assert(WM_TASKBARCREATED);
 
-    gIcon1 = LoadIconW(WindowClass.hInstance, MAKEINTRESOURCEW(1));
-	gIcon2 = LoadIconW(WindowClass.hInstance, MAKEINTRESOURCEW(2));
-	assert(gIcon1 && gIcon2);
+    GlobalOpenIcon          = LoadIconW(WindowClass.hInstance, MAKEINTRESOURCEW(1));
+	GlobalClosedIcon        = LoadIconW(WindowClass.hInstance, MAKEINTRESOURCEW(2));
+    GlobalOpenWarningIcon   = LoadIconW(WindowClass.hInstance, MAKEINTRESOURCEW(3));
+    GlobalClosedWarningIcon = LoadIconW(WindowClass.hInstance, MAKEINTRESOURCEW(4));
+	assert(GlobalOpenIcon && GlobalClosedIcon && GlobalOpenWarningIcon && GlobalClosedWarningIcon);
 
     // NOTE(Oskar): Load configuration
     GlobalConfiguration = LoadConfiguration();
+
+    // NOTE(Oskar): Prepare Logfile
+    if (FileExists(MNOTIFY_LOG_FILE))
+    {
+        DeleteFileA(MNOTIFY_LOG_FILE);
+    }
+    CreateNewFile(MNOTIFY_LOG_FILE);
+    GlobalHasErrors = FALSE;
+
 
     // NOTE(Oskar): Window Creation
     ATOM Atom = RegisterClassExW(&WindowClass);

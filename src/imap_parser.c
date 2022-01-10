@@ -1,13 +1,8 @@
-#define IMAP_PARSER_ERR_NOT_DONE 2
-
 static BOOL
-imap_parse_is_atom(tokenizer *Tokenizer)
+imap_parse_is_tag(tokenizer *Tokenizer)
 {
     token Token = PeekToken(Tokenizer);
 
-    // NOTE(Oskar): This is not 100% according to RFC but we don't use Atoms
-    // atom's right now in the exact same sense. We just use it to identify tags
-    // at the moment.
     if (Token.Type == Token_OpenParen    ||
         Token.Type == Token_CloseParen   ||
         Token.Type == Token_CloseParen   ||
@@ -33,19 +28,19 @@ imap_parse_response_status(token Name)
     }
     else if (strncmp(Name.Text, "NO", Name.TextLength) == 0)
     {
-        return IMAP_RESPONSE_STATUS_OK;
+        return IMAP_RESPONSE_STATUS_NO;
     }
     else if (strncmp(Name.Text, "BAD", Name.TextLength) == 0)
     {
-        return IMAP_RESPONSE_STATUS_OK;
+        return IMAP_RESPONSE_STATUS_BAD;
     }
     else if (strncmp(Name.Text, "PREAUTH", Name.TextLength) == 0)
     {
-        return IMAP_RESPONSE_STATUS_OK;
+        return IMAP_RESPONSE_STATUS_PREAUTH;
     }
     else if (strncmp(Name.Text, "BYE", Name.TextLength) == 0)
     {
-        return IMAP_RESPONSE_STATUS_OK;
+        return IMAP_RESPONSE_STATUS_BYE;
     }
     else
     {
@@ -288,7 +283,7 @@ imap_parse_response(imap_parser *Parser)
     }
 
 
-    if (!imap_parse_is_atom(&Parser->Tokenizer))
+    if (!imap_parse_is_tag(&Parser->Tokenizer))
     {
         Parser->HasError = TRUE;
         sprintf(Parser->Error, "%s", "Response tag is invalid.");
