@@ -22,6 +22,7 @@ The ini file contains the following fields:
 * opensite: The link you want to open in your browser when clicking on MNotify in the system tray.
 * folder: The folder you want to listen for incoming emails in.
 * pollingtimer: If the IMAP service doesn't support IDLE we need to perform polling. This is to specify how often to poll in seconds. Do note that most mail providers has rate limiting so don't choose a too low value.
+* retrytime: If the background thread listening for emails exits it will restart after this many seconds.
 
 When `mnotify.ini` contains your desired options then you can simply run `mnotify.exe` located in the build directory.
 

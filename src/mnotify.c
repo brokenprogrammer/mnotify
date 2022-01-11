@@ -38,6 +38,8 @@
 #define WM_MNOTIFY_COMMAND         (WM_USER+4)
 #define WM_MNOTIFY_ERROR           (WM_USER+5)
 
+#define MNOTIFY_TIMER_RECOVER      1
+
 #define CMD_MNOTIFY  1
 #define CMD_QUIT     2
 #define CMD_LOG      3
@@ -69,8 +71,6 @@ static HICON GlobalOpenWarningIcon;
 static HICON GlobalClosedWarningIcon;
 
 static HWND GlobalWindow;
-static DWORD GlobalBackgroundThreadId;
-static HANDLE GlobalBackgroundThreadHandle;
 
 static WindowsToast Toast;
 static void* Notification;
@@ -309,124 +309,9 @@ LoadConfiguration()
     ReadConfigurationFileString("Account", "folder",      Config.Folder,   256);
     Config.Port               = ReadConfigurationFileInt("Account", "port");
     Config.PollingTimeSeconds = ReadConfigurationFileInt("Account", "pollingtimer");
+    Config.RetryTime          = ReadConfigurationFileInt("Account", "retrytime");
 
     return Config;
-}
-
-static LRESULT CALLBACK 
-WindowProc(HWND Window, UINT Message, WPARAM WParam, LPARAM LParam)
-{
-    if (Message == WM_CREATE)
-    {
-        HR(BufferedPaintInit());
-        AddTrayIcon(Window);
-        return 0;
-    }
-    else if (Message == WM_DESTROY)
-    {
-        RemoveTrayIcon(Window);
-        KillTimer(Window, RESTART_IMAP_IDLE_TIMER_ID);
-        PostQuitMessage(0);
-        return 0;
-    }
-    else if (Message == WM_MNOTIFY_EMAIL_MESSAGE)
-    {
-        int TotalEmails = (int)LParam;
-        EmailCount = TotalEmails;
-
-        if (EmailCount == 0)
-        {
-            GlobalHasErrors ? UpdateTrayIcon(GlobalOpenWarningIcon) : UpdateTrayIcon(GlobalOpenIcon);
-        }
-        else
-        {
-            GlobalHasErrors ? UpdateTrayIcon(GlobalClosedWarningIcon) : UpdateTrayIcon(GlobalClosedIcon);
-            
-            wchar_t Data[512];
-            swprintf(Data, 512, L"You have %d unread mail.", EmailCount);
-
-            wchar_t Link[512];
-            swprintf(Link, 512, L"%hs", GlobalConfiguration.OpenSite);
-
-            if (Notification != NULL)
-            {
-                WindowsToast_Release(&Toast, Notification);
-            }
-
-            ShowNotification(Data, L"You've got new mails!", Link);
-        }
-
-        return 0;
-    }
-    else if (Message == WM_MNOTIFY_EMAIL_CLEAR)
-    {
-        EmailCount = 0;
-    }
-    else if (Message == WM_MNOTIFY_COMMAND)
-    {
-        if (LOWORD(LParam) == WM_RBUTTONUP)
-        {
-            HMENU Menu = CreatePopupMenu();
-            assert(Menu);
-
-            AppendMenuW(Menu, MF_STRING, CMD_MNOTIFY, MNOTIFY_WINDOW_TITLE);
-            AppendMenuW(Menu, MF_SEPARATOR, 0, NULL);
-
-            // TODO(Oskar): Future features?
-            if (GlobalHasErrors)
-            {
-                AppendMenuW(Menu, MF_STRING, CMD_LOG, L"Show Log");
-            }
-            
-            AppendMenuW(Menu, MF_STRING, CMD_QUIT, L"Exit");
-
-            POINT Mouse;
-            GetCursorPos(&Mouse);
-
-            SetForegroundWindow(Window);
-            int Command = TrackPopupMenu(Menu, TPM_RETURNCMD | TPM_NONOTIFY, Mouse.x, Mouse.y, 0, Window, NULL);
-            if (Command == CMD_MNOTIFY)
-            {
-                ShellExecute(NULL, "open", GlobalConfiguration.OpenSite, NULL, NULL, SW_SHOWNORMAL);
-            }
-            else if (Command == CMD_QUIT)
-            {
-                DestroyWindow(Window);
-            }
-            else if (Command == CMD_LOG)
-            {
-                ShellExecute(NULL, "open", MNOTIFY_LOG_FILE, NULL, NULL, SW_SHOWNORMAL);
-            }
-
-            DestroyMenu(Menu);
-        }
-        else if (LOWORD(LParam) == WM_LBUTTONDBLCLK)
-        {
-        }
-
-        return 0;
-    }
-    else if (Message == WM_MNOTIFY_ERROR)
-    {
-        GlobalHasErrors = TRUE;
-
-        char *Error = (char *)WParam;
-        int ErrorLength = (int)LParam;
-        AppendToFile(MNOTIFY_LOG_FILE, Error, ErrorLength);
-
-        if (EmailCount == 0)
-        {
-            UpdateTrayIcon(GlobalOpenWarningIcon);
-        }
-        else 
-        {
-            UpdateTrayIcon(GlobalClosedWarningIcon);
-        }
-
-        return 0;
-    }
-
-    return DefWindowProcW(Window, Message, WParam, LParam);
 }
 
 static void
@@ -592,13 +477,13 @@ ImapBackgroundThread(LPVOID lpParameter)
     if (imap_init(&Imap, GlobalConfiguration.Host, GlobalConfiguration.Port) != IMAP_CLIENT_ERROR_SUCCESS)
     {
         SendMessage(GlobalWindow, WM_MNOTIFY_ERROR, (WPARAM)Imap.Error, (LPARAM)Imap.ErrorLength);
-        return -1;
+        goto thread_fatal;
     }
  
     if(imap_login(&Imap, GlobalConfiguration.Account, GlobalConfiguration.Password) != IMAP_CLIENT_ERROR_SUCCESS)
     {
         SendMessage(GlobalWindow, WM_MNOTIFY_ERROR, (WPARAM)Imap.Error, (LPARAM)Imap.ErrorLength);
-        return -1;
+        goto thread_fatal;
     }
     imap_destroy(&Imap);
 
@@ -612,7 +497,134 @@ ImapBackgroundThread(LPVOID lpParameter)
         ImapPerformPolling(GlobalConfiguration.Host, GlobalConfiguration.Port, GlobalConfiguration.Account, GlobalConfiguration.Password); 
     }
 
+thread_fatal: ;
+    SetTimer(GlobalWindow, MNOTIFY_TIMER_RECOVER, GlobalConfiguration.RetryTime * 1000, NULL);
     return -1;
+}
+
+static LRESULT CALLBACK 
+WindowProc(HWND Window, UINT Message, WPARAM WParam, LPARAM LParam)
+{
+    if (Message == WM_CREATE)
+    {
+        HR(BufferedPaintInit());
+        AddTrayIcon(Window);
+        return 0;
+    }
+    else if (Message == WM_DESTROY)
+    {
+        RemoveTrayIcon(Window);
+        KillTimer(Window, RESTART_IMAP_IDLE_TIMER_ID);
+        PostQuitMessage(0);
+        return 0;
+    }
+    else if (Message == WM_TIMER)
+    {
+        if (WParam == MNOTIFY_TIMER_RECOVER)
+        {
+            KillTimer(Window, MNOTIFY_TIMER_RECOVER);
+            HANDLE Thread = CreateThread(0, 0, ImapBackgroundThread, 0, 0, NULL);
+            CloseHandle(Thread);    
+        }
+    }
+    else if (Message == WM_MNOTIFY_EMAIL_MESSAGE)
+    {
+        int TotalEmails = (int)LParam;
+        EmailCount = TotalEmails;
+
+        if (EmailCount == 0)
+        {
+            GlobalHasErrors ? UpdateTrayIcon(GlobalOpenWarningIcon) : UpdateTrayIcon(GlobalOpenIcon);
+        }
+        else
+        {
+            GlobalHasErrors ? UpdateTrayIcon(GlobalClosedWarningIcon) : UpdateTrayIcon(GlobalClosedIcon);
+            
+            wchar_t Data[512];
+            swprintf(Data, 512, L"You have %d unread mail.", EmailCount);
+
+            wchar_t Link[512];
+            swprintf(Link, 512, L"%hs", GlobalConfiguration.OpenSite);
+
+            if (Notification != NULL)
+            {
+                WindowsToast_Release(&Toast, Notification);
+            }
+
+            ShowNotification(Data, L"You've got new mails!", Link);
+        }
+
+        return 0;
+    }
+    else if (Message == WM_MNOTIFY_EMAIL_CLEAR)
+    {
+        EmailCount = 0;
+    }
+    else if (Message == WM_MNOTIFY_COMMAND)
+    {
+        if (LOWORD(LParam) == WM_RBUTTONUP)
+        {
+            HMENU Menu = CreatePopupMenu();
+            assert(Menu);
+
+            AppendMenuW(Menu, MF_STRING, CMD_MNOTIFY, MNOTIFY_WINDOW_TITLE);
+            AppendMenuW(Menu, MF_SEPARATOR, 0, NULL);
+
+            // TODO(Oskar): Future features?
+            if (GlobalHasErrors)
+            {
+                AppendMenuW(Menu, MF_STRING, CMD_LOG, L"Show Log");
+            }
+            
+            AppendMenuW(Menu, MF_STRING, CMD_QUIT, L"Exit");
+
+            POINT Mouse;
+            GetCursorPos(&Mouse);
+
+            SetForegroundWindow(Window);
+            int Command = TrackPopupMenu(Menu, TPM_RETURNCMD | TPM_NONOTIFY, Mouse.x, Mouse.y, 0, Window, NULL);
+            if (Command == CMD_MNOTIFY)
+            {
+                ShellExecute(NULL, "open", GlobalConfiguration.OpenSite, NULL, NULL, SW_SHOWNORMAL);
+            }
+            else if (Command == CMD_QUIT)
+            {
+                DestroyWindow(Window);
+            }
+            else if (Command == CMD_LOG)
+            {
+                ShellExecute(NULL, "open", MNOTIFY_LOG_FILE, NULL, NULL, SW_SHOWNORMAL);
+            }
+
+            DestroyMenu(Menu);
+        }
+        else if (LOWORD(LParam) == WM_LBUTTONDBLCLK)
+        {
+        }
+
+        return 0;
+    }
+    else if (Message == WM_MNOTIFY_ERROR)
+    {
+        GlobalHasErrors = TRUE;
+
+        char *Error = (char *)WParam;
+        int ErrorLength = (int)LParam;
+        AppendToFile(MNOTIFY_LOG_FILE, Error, ErrorLength);
+
+        if (EmailCount == 0)
+        {
+            UpdateTrayIcon(GlobalOpenWarningIcon);
+        }
+        else 
+        {
+            UpdateTrayIcon(GlobalClosedWarningIcon);
+        }
+
+        return 0;
+    }
+
+    return DefWindowProcW(Window, Message, WParam, LParam);
 }
 
 static void MNotifyToastCallback(WindowsToast* Toast, void* Item, LPCWSTR Action)
@@ -679,7 +691,9 @@ WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLine, int ShowC
     }
 
     // TODO(Oskar): Later create 1 per email account?
-    GlobalBackgroundThreadHandle = CreateThread(0, 0, ImapBackgroundThread, 0, 0, &GlobalBackgroundThreadId);
+    HANDLE Thread = CreateThread(0, 0, ImapBackgroundThread, 0, 0, NULL);
+    CloseHandle(Thread);
+
     EmailCount = 0;
     for (;;)
     {

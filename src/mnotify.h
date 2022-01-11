@@ -7,6 +7,7 @@ typedef struct
     char Folder[256];
     int Port;
     int PollingTimeSeconds;
+    int RetryTime;
 } mnotify_config;
 
 
