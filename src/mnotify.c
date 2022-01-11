@@ -196,11 +196,11 @@ static void
 ShowNotification(LPCWSTR Message, LPCWSTR Title, LPCWSTR OpenLink)
 {
     static WCHAR ImagePath[MAX_PATH];
-    int ImageLength = 0;
     
-    ImageLength += wsprintfW(ImagePath, L"file:///");
-    ImageLength += GetCurrentDirectoryW(MAX_PATH, ImagePath + ImageLength);
-    wsprintfW(ImagePath + ImageLength, L"/%s", MNOTIFY_LOGO_FILE_NAME);
+    WCHAR ExeFolder[MAX_PATH];
+	GetModuleFileNameW(NULL, ExeFolder, ARRAYSIZE(ExeFolder));
+	PathRemoveFileSpecW(ExeFolder);
+    wsprintfW(ImagePath, L"%s/%s", ExeFolder, MNOTIFY_LOGO_FILE_NAME);
     
     for (WCHAR* P = ImagePath; *P; P++)
     {
@@ -212,7 +212,7 @@ ShowNotification(LPCWSTR Message, LPCWSTR Title, LPCWSTR OpenLink)
 
     XmlLength = StrCatChainW(Xml, ARRAYSIZE(Xml), XmlLength,
 		L"<toast duration=\"short\"><visual><binding template=\"ToastGeneric\">"
-		L"<image placement=\"appLogoOverride\" src=\"");
+		L"<image placement=\"appLogoOverride\" src=\"file:///");
 	XmlLength = StrCatChainW(Xml, ARRAYSIZE(Xml), XmlLength, ImagePath);
 	XmlLength = StrCatChainW(Xml, ARRAYSIZE(Xml), XmlLength,
 		L"\"/>"
