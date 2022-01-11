@@ -44,7 +44,7 @@ If you find any problems or have additional feature requests please submit an is
 
 ## Thanks to
 
-[Mārtiņš Možeiko (mmozeiko)](https://github.com/mmozeiko) for the tls code which is available [here](https://gist.github.com/mmozeiko/c0dfcc8fec527a90a02145d2cc0bfb6d).
+[Mārtiņš Možeiko (mmozeiko)](https://github.com/mmozeiko) for the tls code which is available [here](https://gist.github.com/mmozeiko/c0dfcc8fec527a90a02145d2cc0bfb6d). And the WindowsToast.h header file to add support for Windows 10 style toasts in C.
 
 ## License
 

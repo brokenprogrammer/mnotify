@@ -1,3 +1,5 @@
+#define INITGUID
+#define COBJMACROS
 #define WIN32_LEAN_AND_MEAN
 #include <winsock2.h>
 #include <windows.h>
@@ -45,6 +47,8 @@
 #define MNOTIFY_CONFIG_FILE         "./mnotify.ini"
 #define MNOTIFY_CONFIG_FILEW        L"./mnotify.ini"
 #define MNOTIFY_LOG_FILE            "log.txt"
+#define MNOTIFY_APPID               L"MNotify.MNotify" // CompanyName.ProductName
+#define MNOTIFY_LOGO_FILE_NAME      L"mnotify_logo.png"
 
 #define RESTART_IMAP_IDLE_TIMER_ID 1
 
@@ -52,8 +56,13 @@
 
 #define HR(hr) do { HRESULT _hr = (hr); assert(SUCCEEDED(_hr)); } while (0)
 
+#include "imap_parser.c"
+#include "imap_client.c"
+#include "WindowsToast.h"
+
 // Globals
 static UINT WM_TASKBARCREATED;
+
 static HICON GlobalOpenIcon;
 static HICON GlobalClosedIcon;
 static HICON GlobalOpenWarningIcon;
@@ -63,6 +72,9 @@ static HWND GlobalWindow;
 static DWORD GlobalBackgroundThreadId;
 static HANDLE GlobalBackgroundThreadHandle;
 
+static WindowsToast Toast;
+static void* Notification;
+
 // NOTE(Oskar): IDLE needs to reset every 29 minutes to prevent server from kicking
 // us out so we store the currently used Imap Client globally so if the background thread
 // is blocked reading messages the main thread can close the connection forcing a reset.
@@ -71,9 +83,6 @@ static BOOL GlobalImapIdleClientWasReset;
 
 static mnotify_config GlobalConfiguration;
 static BOOL GlobalHasErrors;
-
-#include "imap_parser.c"
-#include "imap_client.c"
 
 static unsigned int EmailCount;
 
@@ -184,19 +193,46 @@ AppendToFile(char *FilePath, void *Data, unsigned int DataLength)
 }
 
 static void 
-ShowNotification(LPCWSTR Message, LPCWSTR Title, DWORD Flags)
+ShowNotification(LPCWSTR Message, LPCWSTR Title, LPCWSTR OpenLink)
 {
-    NOTIFYICONDATAW Data =
+    static WCHAR ImagePath[MAX_PATH];
+    int ImageLength = 0;
+    
+    ImageLength += wsprintfW(ImagePath, L"file:///");
+    ImageLength += GetCurrentDirectoryW(MAX_PATH, ImagePath + ImageLength);
+    wsprintfW(ImagePath + ImageLength, L"/%s", MNOTIFY_LOGO_FILE_NAME);
+    
+    for (WCHAR* P = ImagePath; *P; P++)
     {
-        .cbSize = sizeof(Data),
-        .hWnd = GlobalWindow,
-        .uFlags = NIF_INFO | NIF_TIP,
-        .dwInfoFlags = Flags, // NIIF_INFO, NIIF_WARNING, NIIF_ERROR
-    };
-    StrCpyNW(Data.szTip, MNOTIFY_WINDOW_TITLE, _countof(Data.szTip));
-    StrCpyNW(Data.szInfo, Message, _countof(Data.szInfo));
-    StrCpyNW(Data.szInfoTitle, Title ? Title : MNOTIFY_WINDOW_TITLE, _countof(Data.szInfoTitle));
-    Shell_NotifyIconW(NIM_MODIFY, &Data);
+        if (*P == '\\') *P = '/';
+    }
+
+    WCHAR Xml[2048];
+    int XmlLength = 0;
+
+    XmlLength = StrCatChainW(Xml, ARRAYSIZE(Xml), XmlLength,
+		L"<toast duration=\"short\"><visual><binding template=\"ToastGeneric\">"
+		L"<image placement=\"appLogoOverride\" src=\"");
+	XmlLength = StrCatChainW(Xml, ARRAYSIZE(Xml), XmlLength, ImagePath);
+	XmlLength = StrCatChainW(Xml, ARRAYSIZE(Xml), XmlLength,
+		L"\"/>"
+		L"<text>{title}</text>"
+		L"<text>{message}</text>"
+		L"</binding></visual><actions>");
+
+    XmlLength = StrCatChainW(Xml, ARRAYSIZE(Xml), XmlLength, L"<action content=\"Open\" arguments=\"");
+	XmlLength = StrCatChainW(Xml, ARRAYSIZE(Xml), XmlLength, OpenLink);
+	XmlLength = StrCatChainW(Xml, ARRAYSIZE(Xml), XmlLength,
+		L"\"/>"
+		L"</actions></toast>");
+
+    LPCWSTR Data[][2] =
+	{
+		{ L"title",   Title },
+		{ L"message", Message },
+	};
+    Notification = WindowsToast_Create(&Toast, Xml, XmlLength, Data, ARRAYSIZE(Data));
+	WindowsToast_Show(&Toast, Notification);
 }
 
 static void 
@@ -305,9 +341,19 @@ WindowProc(HWND Window, UINT Message, WPARAM WParam, LPARAM LParam)
         else
         {
             GlobalHasErrors ? UpdateTrayIcon(GlobalClosedWarningIcon) : UpdateTrayIcon(GlobalClosedIcon);
+            
             wchar_t Data[512];
             swprintf(Data, 512, L"You have %d unread mail.", EmailCount);
-            ShowNotification(Data, L"You've got new mails!", NIIF_INFO);
+
+            wchar_t Link[512];
+            swprintf(Link, 512, L"%hs", GlobalConfiguration.OpenSite);
+
+            if (Notification != NULL)
+            {
+                WindowsToast_Release(&Toast, Notification);
+            }
+
+            ShowNotification(Data, L"You've got new mails!", Link);
         }
 
         return 0;
@@ -569,6 +615,12 @@ ImapBackgroundThread(LPVOID lpParameter)
     return -1;
 }
 
+static void MNotifyToastCallback(WindowsToast* Toast, void* Item, LPCWSTR Action)
+{
+    LPCWSTR Url = Action;
+    ShellExecuteW(NULL, L"open", Url, NULL, NULL, SW_SHOWNORMAL);
+}
+
 int CALLBACK
 WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLine, int ShowCode)
 {
@@ -587,6 +639,10 @@ WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLine, int ShowC
         PostMessageW(MNotifyWindow, WM_MNOTIFY_ALREADY_RUNNING, 0, 0);
         ExitProcess(0);
     }
+
+    WindowsToast_Init(&Toast, MNOTIFY_WINDOW_TITLE, MNOTIFY_APPID);
+    WindowsToast_HideAll(&Toast, MNOTIFY_APPID);
+    Toast.OnActivatedCallback = MNotifyToastCallback;
 
     WM_TASKBARCREATED = RegisterWindowMessageW(L"TaskbarCreated");
     assert(WM_TASKBARCREATED);
