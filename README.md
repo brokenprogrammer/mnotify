@@ -1,4 +1,4 @@
-# mnotify
+# MNotify
 
 Simple email notification application.
 
@@ -7,24 +7,28 @@ IMAP protocol and give you notifications when you have unread mail.
 
 ## Building
 
-In order to build the application you need to run `vcvarsall.bat` then `build.bat`.
+In order to build the application you need to run `build.bat`.
 
 ## Usage
 
-Before opening mnotify you have to edit the `mnotify.ini` file within the build directory.
+Before opening MNotify you have to edit the `mnotify.ini` file within the build directory.
 
 The ini file contains the following fields:
 
-* host: The host of your email provider's imap server.
-* port: the port for your email provider's imap server.
-* accountname: Your account name.
-* password: Your password.
-* opensite: The link you want to open in your browser when clicking on MNotify in the system tray.
-* folder: The folder you want to listen for incoming emails in.
-* pollingtimer: If the IMAP service doesn't support IDLE we need to perform polling. This is to specify how often to poll in seconds. Do note that most mail providers has rate limiting so don't choose a too low value.
-* retrytime: If the background thread listening for emails exits it will restart after this many seconds.
+| Configuration | Description   | Example       |
+| ------------- | ------------- | ------------- |
+| host  | The host of your email provider's imap server. | imap.gmail.com |
+| port  | The port for your email provider's imap server.  | 993 |
+| accountname  | Your account name.  | example@gmail.com |
+| password  | Your password.  | RandomGeneratedAppPassword |
+| opensite  | The link you want to open in your browser when clicking on MNotify in the system tray.  | <https://mail.google.com/mail/u/0/> |
+| folder  | The folder you want to listen for incoming emails in.  | inbox |
+| pollingtimer  | If the IMAP service doesn't support IDLE we need to perform polling. This is to specify how often to poll in seconds. Do note that most mail providers has rate limiting so don't choose a too low value.  | 600 |
+| retrytime  | If the background thread listening for emails exits it will restart after this many seconds.  | 60 |
 
 When `mnotify.ini` contains your desired options then you can simply run `mnotify.exe` located in the build directory.
+
+In case of errors MNotify will write to a logfile located next to the executable. The icon within the system tray will change to include a warning triangle in the top right corner. In theese cases MNotify will also include an option when right-clicking the application in the system tray to show the error log.
 
 ### Tested email providers
 

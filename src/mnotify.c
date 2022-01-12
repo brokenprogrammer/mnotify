@@ -594,6 +594,18 @@ WindowProc(HWND Window, UINT Message, WPARAM WParam, LPARAM LParam)
             else if (Command == CMD_LOG)
             {
                 ShellExecute(NULL, "open", MNOTIFY_LOG_FILE, NULL, NULL, SW_SHOWNORMAL);
+                
+                // NOTE(Oskar): User has viewed errors so we reset the icon back
+                GlobalHasErrors = FALSE;
+
+                if (EmailCount == 0)
+                {
+                    UpdateTrayIcon(GlobalOpenIcon);
+                }
+                else 
+                {
+                    UpdateTrayIcon(GlobalClosedIcon);
+                }
             }
 
             DestroyMenu(Menu);
